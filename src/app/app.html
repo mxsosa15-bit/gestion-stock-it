@@ -1,344 +1,663 @@
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * The content below * * * * * * * * * * * -->
-<!-- * * * * * * * * * * is only a placeholder * * * * * * * * * * -->
-<!-- * * * * * * * * * * and can be replaced.  * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * Delete the template below * * * * * * * * * -->
-<!-- * * * * * * * to get started with your project! * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
+<ng-container *ngIf="authService.user()">
+<div *ngIf="!inventoryService.cargando() && !inventoryService.errorCarga()" class="app-shell">
+  <button
+    *ngIf="menuMovilAbierto()"
+    type="button"
+    class="mobile-menu-backdrop"
+    aria-label="Cerrar menú de navegación"
+    (click)="menuMovilAbierto.set(false)"
+  ></button>
 
-<style>
-  :host {
-    --bright-blue: oklch(51.01% 0.274 263.83);
-    --electric-violet: oklch(53.18% 0.28 296.97);
-    --french-violet: oklch(47.66% 0.246 305.88);
-    --vivid-pink: oklch(69.02% 0.277 332.77);
-    --hot-red: oklch(61.42% 0.238 15.34);
-    --orange-red: oklch(63.32% 0.24 31.68);
+  <aside class="sidebar" [class.mobile-open]="menuMovilAbierto()">
+    <a class="brand" href="#" aria-label="DOSEP - Gestión de Parque IT" (click)="$event.preventDefault(); cambiarVista('PARQUE')">
+      <span class="brand-logo">
+        <img ngSrc="/logos/dosep.png" width="1024" height="235" sizes="(min-width: 720px) 20vw, 80vw" alt="DOSEP" priority>
+      </span>
+    </a>
 
-    --gray-900: oklch(19.37% 0.006 300.98);
-    --gray-700: oklch(36.98% 0.014 302.71);
-    --gray-400: oklch(70.9% 0.015 304.04);
-
-    --red-to-pink-to-purple-vertical-gradient: linear-gradient(
-      180deg,
-      var(--orange-red) 0%,
-      var(--vivid-pink) 50%,
-      var(--electric-violet) 100%
-    );
-
-    --red-to-pink-to-purple-horizontal-gradient: linear-gradient(
-      90deg,
-      var(--orange-red) 0%,
-      var(--vivid-pink) 50%,
-      var(--electric-violet) 100%
-    );
-
-    --pill-accent: var(--bright-blue);
-
-    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-      "Segoe UI Symbol";
-    box-sizing: border-box;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    display: block;
-    height: 100dvh;
-  }
-
-  h1 {
-    font-size: 3.125rem;
-    color: var(--gray-900);
-    font-weight: 500;
-    line-height: 100%;
-    letter-spacing: -0.125rem;
-    margin: 0;
-    font-family: "Inter Tight", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-      "Segoe UI Symbol";
-  }
-
-  p {
-    margin: 0;
-    color: var(--gray-700);
-  }
-
-  main {
-    width: 100%;
-    min-height: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 1rem;
-    box-sizing: inherit;
-    position: relative;
-  }
-
-  .angular-logo {
-    max-width: 9.2rem;
-  }
-
-  .content {
-    display: flex;
-    justify-content: space-around;
-    width: 100%;
-    max-width: 700px;
-    margin-bottom: 3rem;
-  }
-
-  .content h1 {
-    margin-top: 1.75rem;
-  }
-
-  .content p {
-    margin-top: 1.5rem;
-  }
-
-  .divider {
-    width: 1px;
-    background: var(--red-to-pink-to-purple-vertical-gradient);
-    margin-inline: 0.5rem;
-  }
-
-  .pill-group {
-    display: flex;
-    flex-direction: column;
-    align-items: start;
-    flex-wrap: wrap;
-    gap: 1.25rem;
-  }
-
-  .pill {
-    display: flex;
-    align-items: center;
-    --pill-accent: var(--bright-blue);
-    background: color-mix(in srgb, var(--pill-accent) 5%, transparent);
-    color: var(--pill-accent);
-    padding-inline: 0.75rem;
-    padding-block: 0.375rem;
-    border-radius: 2.75rem;
-    border: 0;
-    transition: background 0.3s ease;
-    font-family: var(--inter-font);
-    font-size: 0.875rem;
-    font-style: normal;
-    font-weight: 500;
-    line-height: 1.4rem;
-    letter-spacing: -0.00875rem;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .pill:hover {
-    background: color-mix(in srgb, var(--pill-accent) 15%, transparent);
-  }
-
-  .pill-group .pill:nth-child(6n + 1) {
-    --pill-accent: var(--bright-blue);
-  }
-  .pill-group .pill:nth-child(6n + 2) {
-    --pill-accent: var(--electric-violet);
-  }
-  .pill-group .pill:nth-child(6n + 3) {
-    --pill-accent: var(--french-violet);
-  }
-
-  .pill-group .pill:nth-child(6n + 4),
-  .pill-group .pill:nth-child(6n + 5),
-  .pill-group .pill:nth-child(6n + 6) {
-    --pill-accent: var(--hot-red);
-  }
-
-  .pill-group svg {
-    margin-inline-start: 0.25rem;
-  }
-
-  .social-links {
-    display: flex;
-    align-items: center;
-    gap: 0.73rem;
-    margin-top: 1.5rem;
-  }
-
-  .social-links path {
-    transition: fill 0.3s ease;
-    fill: var(--gray-400);
-  }
-
-  .social-links a:hover svg path {
-    fill: var(--gray-900);
-  }
-
-  @media screen and (max-width: 650px) {
-    .content {
-      flex-direction: column;
-      width: max-content;
-    }
-
-    .divider {
-      height: 1px;
-      width: 100%;
-      background: var(--red-to-pink-to-purple-horizontal-gradient);
-      margin-block: 1.5rem;
-    }
-  }
-</style>
-
-<main class="main">
-  <div class="content">
-    <div class="left-side">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 982 239"
-        fill="none"
-        class="angular-logo"
-      >
-        <g clip-path="url(#a)">
-          <path
-            fill="url(#b)"
-            d="M388.676 191.625h30.849L363.31 31.828h-35.758l-56.215 159.797h30.848l13.174-39.356h60.061l13.256 39.356Zm-65.461-62.675 21.602-64.311h1.227l21.602 64.311h-44.431Zm126.831-7.527v70.202h-28.23V71.839h27.002v20.374h1.392c2.782-6.71 7.2-12.028 13.255-15.956 6.056-3.927 13.584-5.89 22.503-5.89 8.264 0 15.465 1.8 21.684 5.318 6.137 3.518 10.964 8.673 14.319 15.382 3.437 6.71 5.074 14.81 4.992 24.383v76.175h-28.23v-71.92c0-8.019-2.046-14.237-6.219-18.819-4.173-4.5-9.819-6.791-17.102-6.791-4.91 0-9.328 1.063-13.174 3.272-3.846 2.128-6.792 5.237-9.001 9.328-2.046 4.009-3.191 8.918-3.191 14.728ZM589.233 239c-10.147 0-18.82-1.391-26.103-4.091-7.282-2.7-13.092-6.382-17.511-10.964-4.418-4.582-7.528-9.655-9.164-15.219l25.448-6.136c1.145 2.372 2.782 4.663 4.991 6.954 2.209 2.291 5.155 4.255 8.837 5.81 3.683 1.554 8.428 2.291 14.074 2.291 8.019 0 14.647-1.964 19.884-5.81 5.237-3.845 7.856-10.227 7.856-19.064v-22.665h-1.391c-1.473 2.946-3.601 5.892-6.383 9.001-2.782 3.109-6.464 5.645-10.965 7.691-4.582 2.046-10.228 3.109-17.101 3.109-9.165 0-17.511-2.209-25.039-6.545-7.446-4.337-13.42-10.883-17.757-19.474-4.418-8.673-6.628-19.473-6.628-32.565 0-13.091 2.21-24.301 6.628-33.383 4.419-9.082 10.311-15.955 17.839-20.7 7.528-4.746 15.874-7.037 25.039-7.037 7.037 0 12.846 1.145 17.347 3.518 4.582 2.373 8.182 5.236 10.883 8.51 2.7 3.272 4.746 6.382 6.137 9.327h1.554v-19.8h27.821v121.749c0 10.228-2.454 18.737-7.364 25.447-4.91 6.709-11.538 11.7-20.048 15.055-8.509 3.355-18.165 4.991-28.884 4.991Zm.245-71.266c5.974 0 11.047-1.473 15.302-4.337 4.173-2.945 7.446-7.118 9.573-12.519 2.21-5.482 3.274-12.027 3.274-19.637 0-7.609-1.064-14.155-3.274-19.8-2.127-5.646-5.318-10.064-9.491-13.255-4.174-3.11-9.329-4.746-15.384-4.746s-11.537 1.636-15.792 4.91c-4.173 3.272-7.365 7.772-9.492 13.418-2.128 5.727-3.191 12.191-3.191 19.392 0 7.2 1.063 13.745 3.273 19.228 2.127 5.482 5.318 9.736 9.573 12.764 4.174 3.027 9.41 4.582 15.629 4.582Zm141.56-26.51V71.839h28.23v119.786h-27.412v-21.273h-1.227c-2.7 6.709-7.119 12.191-13.338 16.446-6.137 4.255-13.747 6.382-22.748 6.382-7.855 0-14.81-1.718-20.783-5.237-5.974-3.518-10.72-8.591-14.075-15.382-3.355-6.709-5.073-14.891-5.073-24.464V71.839h28.312v71.921c0 7.609 2.046 13.664 6.219 18.083 4.173 4.5 9.655 6.709 16.365 6.709 4.173 0 8.183-.982 12.111-3.028 3.927-2.045 7.118-5.072 9.655-9.082 2.537-4.091 3.764-9.164 3.764-15.218Zm65.707-109.395v159.796h-28.23V31.828h28.23Zm44.841 162.169c-7.61 0-14.402-1.391-20.457-4.091-6.055-2.7-10.883-6.791-14.32-12.109-3.518-5.319-5.237-11.946-5.237-19.801 0-6.791 1.228-12.355 3.765-16.773 2.536-4.419 5.891-7.937 10.228-10.637 4.337-2.618 9.164-4.664 14.647-6.055 5.4-1.391 11.046-2.373 16.856-3.027 7.037-.737 12.683-1.391 17.102-1.964 4.337-.573 7.528-1.555 9.574-2.782 1.963-1.309 3.027-3.273 3.027-5.973v-.491c0-5.891-1.718-10.391-5.237-13.664-3.518-3.191-8.51-4.828-15.056-4.828-6.955 0-12.356 1.473-16.447 4.5-4.009 3.028-6.71 6.546-8.183 10.719l-26.348-3.764c2.046-7.282 5.483-13.336 10.31-18.328 4.746-4.909 10.638-8.59 17.511-11.045 6.955-2.455 14.565-3.682 22.912-3.682 5.809 0 11.537.654 17.265 2.045s10.965 3.6 15.711 6.71c4.746 3.109 8.51 7.282 11.455 12.6 2.864 5.318 4.337 11.946 4.337 19.883v80.184h-27.166v-16.446h-.9c-1.719 3.355-4.092 6.464-7.201 9.328-3.109 2.864-6.955 5.237-11.619 6.955-4.828 1.718-10.229 2.536-16.529 2.536Zm7.364-20.701c5.646 0 10.556-1.145 14.729-3.354 4.173-2.291 7.364-5.237 9.655-9.001 2.292-3.763 3.355-7.854 3.355-12.273v-14.155c-.9.737-2.373 1.391-4.5 2.046-2.128.654-4.419 1.145-7.037 1.636-2.619.491-5.155.9-7.692 1.227-2.537.328-4.746.655-6.628.901-4.173.572-8.019 1.472-11.292 2.781-3.355 1.31-5.973 3.11-7.855 5.401-1.964 2.291-2.864 5.318-2.864 8.918 0 5.237 1.882 9.164 5.728 11.782 3.682 2.782 8.51 4.091 14.401 4.091Zm64.643 18.328V71.839h27.412v19.965h1.227c2.21-6.955 5.974-12.274 11.292-16.038 5.319-3.763 11.456-5.645 18.329-5.645 1.555 0 3.355.082 5.237.163 1.964.164 3.601.328 4.91.573v25.938c-1.227-.41-3.109-.819-5.646-1.146a58.814 58.814 0 0 0-7.446-.49c-5.155 0-9.738 1.145-13.829 3.354-4.091 2.209-7.282 5.236-9.655 9.164-2.373 3.927-3.519 8.427-3.519 13.5v70.448h-28.312ZM222.077 39.192l-8.019 125.923L137.387 0l84.69 39.192Zm-53.105 162.825-57.933 33.056-57.934-33.056 11.783-28.556h92.301l11.783 28.556ZM111.039 62.675l30.357 73.803H80.681l30.358-73.803ZM7.937 165.115 0 39.192 84.69 0 7.937 165.115Z"
-          />
-          <path
-            fill="url(#c)"
-            d="M388.676 191.625h30.849L363.31 31.828h-35.758l-56.215 159.797h30.848l13.174-39.356h60.061l13.256 39.356Zm-65.461-62.675 21.602-64.311h1.227l21.602 64.311h-44.431Zm126.831-7.527v70.202h-28.23V71.839h27.002v20.374h1.392c2.782-6.71 7.2-12.028 13.255-15.956 6.056-3.927 13.584-5.89 22.503-5.89 8.264 0 15.465 1.8 21.684 5.318 6.137 3.518 10.964 8.673 14.319 15.382 3.437 6.71 5.074 14.81 4.992 24.383v76.175h-28.23v-71.92c0-8.019-2.046-14.237-6.219-18.819-4.173-4.5-9.819-6.791-17.102-6.791-4.91 0-9.328 1.063-13.174 3.272-3.846 2.128-6.792 5.237-9.001 9.328-2.046 4.009-3.191 8.918-3.191 14.728ZM589.233 239c-10.147 0-18.82-1.391-26.103-4.091-7.282-2.7-13.092-6.382-17.511-10.964-4.418-4.582-7.528-9.655-9.164-15.219l25.448-6.136c1.145 2.372 2.782 4.663 4.991 6.954 2.209 2.291 5.155 4.255 8.837 5.81 3.683 1.554 8.428 2.291 14.074 2.291 8.019 0 14.647-1.964 19.884-5.81 5.237-3.845 7.856-10.227 7.856-19.064v-22.665h-1.391c-1.473 2.946-3.601 5.892-6.383 9.001-2.782 3.109-6.464 5.645-10.965 7.691-4.582 2.046-10.228 3.109-17.101 3.109-9.165 0-17.511-2.209-25.039-6.545-7.446-4.337-13.42-10.883-17.757-19.474-4.418-8.673-6.628-19.473-6.628-32.565 0-13.091 2.21-24.301 6.628-33.383 4.419-9.082 10.311-15.955 17.839-20.7 7.528-4.746 15.874-7.037 25.039-7.037 7.037 0 12.846 1.145 17.347 3.518 4.582 2.373 8.182 5.236 10.883 8.51 2.7 3.272 4.746 6.382 6.137 9.327h1.554v-19.8h27.821v121.749c0 10.228-2.454 18.737-7.364 25.447-4.91 6.709-11.538 11.7-20.048 15.055-8.509 3.355-18.165 4.991-28.884 4.991Zm.245-71.266c5.974 0 11.047-1.473 15.302-4.337 4.173-2.945 7.446-7.118 9.573-12.519 2.21-5.482 3.274-12.027 3.274-19.637 0-7.609-1.064-14.155-3.274-19.8-2.127-5.646-5.318-10.064-9.491-13.255-4.174-3.11-9.329-4.746-15.384-4.746s-11.537 1.636-15.792 4.91c-4.173 3.272-7.365 7.772-9.492 13.418-2.128 5.727-3.191 12.191-3.191 19.392 0 7.2 1.063 13.745 3.273 19.228 2.127 5.482 5.318 9.736 9.573 12.764 4.174 3.027 9.41 4.582 15.629 4.582Zm141.56-26.51V71.839h28.23v119.786h-27.412v-21.273h-1.227c-2.7 6.709-7.119 12.191-13.338 16.446-6.137 4.255-13.747 6.382-22.748 6.382-7.855 0-14.81-1.718-20.783-5.237-5.974-3.518-10.72-8.591-14.075-15.382-3.355-6.709-5.073-14.891-5.073-24.464V71.839h28.312v71.921c0 7.609 2.046 13.664 6.219 18.083 4.173 4.5 9.655 6.709 16.365 6.709 4.173 0 8.183-.982 12.111-3.028 3.927-2.045 7.118-5.072 9.655-9.082 2.537-4.091 3.764-9.164 3.764-15.218Zm65.707-109.395v159.796h-28.23V31.828h28.23Zm44.841 162.169c-7.61 0-14.402-1.391-20.457-4.091-6.055-2.7-10.883-6.791-14.32-12.109-3.518-5.319-5.237-11.946-5.237-19.801 0-6.791 1.228-12.355 3.765-16.773 2.536-4.419 5.891-7.937 10.228-10.637 4.337-2.618 9.164-4.664 14.647-6.055 5.4-1.391 11.046-2.373 16.856-3.027 7.037-.737 12.683-1.391 17.102-1.964 4.337-.573 7.528-1.555 9.574-2.782 1.963-1.309 3.027-3.273 3.027-5.973v-.491c0-5.891-1.718-10.391-5.237-13.664-3.518-3.191-8.51-4.828-15.056-4.828-6.955 0-12.356 1.473-16.447 4.5-4.009 3.028-6.71 6.546-8.183 10.719l-26.348-3.764c2.046-7.282 5.483-13.336 10.31-18.328 4.746-4.909 10.638-8.59 17.511-11.045 6.955-2.455 14.565-3.682 22.912-3.682 5.809 0 11.537.654 17.265 2.045s10.965 3.6 15.711 6.71c4.746 3.109 8.51 7.282 11.455 12.6 2.864 5.318 4.337 11.946 4.337 19.883v80.184h-27.166v-16.446h-.9c-1.719 3.355-4.092 6.464-7.201 9.328-3.109 2.864-6.955 5.237-11.619 6.955-4.828 1.718-10.229 2.536-16.529 2.536Zm7.364-20.701c5.646 0 10.556-1.145 14.729-3.354 4.173-2.291 7.364-5.237 9.655-9.001 2.292-3.763 3.355-7.854 3.355-12.273v-14.155c-.9.737-2.373 1.391-4.5 2.046-2.128.654-4.419 1.145-7.037 1.636-2.619.491-5.155.9-7.692 1.227-2.537.328-4.746.655-6.628.901-4.173.572-8.019 1.472-11.292 2.781-3.355 1.31-5.973 3.11-7.855 5.401-1.964 2.291-2.864 5.318-2.864 8.918 0 5.237 1.882 9.164 5.728 11.782 3.682 2.782 8.51 4.091 14.401 4.091Zm64.643 18.328V71.839h27.412v19.965h1.227c2.21-6.955 5.974-12.274 11.292-16.038 5.319-3.763 11.456-5.645 18.329-5.645 1.555 0 3.355.082 5.237.163 1.964.164 3.601.328 4.91.573v25.938c-1.227-.41-3.109-.819-5.646-1.146a58.814 58.814 0 0 0-7.446-.49c-5.155 0-9.738 1.145-13.829 3.354-4.091 2.209-7.282 5.236-9.655 9.164-2.373 3.927-3.519 8.427-3.519 13.5v70.448h-28.312ZM222.077 39.192l-8.019 125.923L137.387 0l84.69 39.192Zm-53.105 162.825-57.933 33.056-57.934-33.056 11.783-28.556h92.301l11.783 28.556ZM111.039 62.675l30.357 73.803H80.681l30.358-73.803ZM7.937 165.115 0 39.192 84.69 0 7.937 165.115Z"
-          />
-        </g>
-        <defs>
-          <radialGradient
-            id="c"
-            cx="0"
-            cy="0"
-            r="1"
-            gradientTransform="rotate(118.122 171.182 60.81) scale(205.794)"
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stop-color="#FF41F8" />
-            <stop offset=".707" stop-color="#FF41F8" stop-opacity=".5" />
-            <stop offset="1" stop-color="#FF41F8" stop-opacity="0" />
-          </radialGradient>
-          <linearGradient
-            id="b"
-            x1="0"
-            x2="982"
-            y1="192"
-            y2="192"
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stop-color="#F0060B" />
-            <stop offset="0" stop-color="#F0070C" />
-            <stop offset=".526" stop-color="#CC26D5" />
-            <stop offset="1" stop-color="#7702FF" />
-          </linearGradient>
-          <clipPath id="a"><path fill="#fff" d="M0 0h982v239H0z" /></clipPath>
-        </defs>
-      </svg>
-      <h1>Hello, {{ title() }}</h1>
-      <p>Congratulations! Your app is running. 🎉</p>
+    <div class="sidebar-user">
+      <span class="sidebar-user-icon" aria-hidden="true">♟</span>
+      <span>{{ authService.user()?.username }}</span>
     </div>
-    <div class="divider" role="separator" aria-label="Divider"></div>
-    <div class="right-side">
-      <div class="pill-group">
-        @for (item of [
-          { title: 'Explore the Docs', link: 'https://angular.dev' },
-          { title: 'Learn with Tutorials', link: 'https://angular.dev/tutorials' },
-          { title: 'Prompt and best practices for AI', link: 'https://angular.dev/ai/develop-with-ai'},
-          { title: 'CLI Docs', link: 'https://angular.dev/tools/cli' },
-          { title: 'Angular Language Service', link: 'https://angular.dev/tools/language-service' },
-          { title: 'Angular DevTools', link: 'https://angular.dev/tools/devtools' },
-        ]; track item.title) {
-          <a
-            class="pill"
-            [href]="item.link"
-            target="_blank"
-            rel="noopener"
-          >
-            <span>{{ item.title }}</span>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              height="14"
-              viewBox="0 -960 960 960"
-              width="14"
-              fill="currentColor"
-            >
-              <path
-                d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z"
+
+    <span class="sidebar-caption">MENÚ PRINCIPAL</span>
+    <nav class="sidebar-nav" aria-label="Navegación principal">
+      <button type="button" (click)="cambiarVista('PARQUE')" [class.active]="vistaActiva() === 'PARQUE'">
+        <span class="nav-icon">▦</span><span>Parque informático</span>
+        <span class="nav-count">{{ puestos().length }}</span>
+      </button>
+      <button type="button" (click)="cambiarVista('STOCK')" [class.active]="vistaActiva() === 'STOCK'">
+        <span class="nav-icon">▣</span><span>Depósito y stock</span>
+        <span class="nav-count">{{ stock().length }}</span>
+      </button>
+      <button type="button" (click)="cambiarVista('EDIFICIO')" [class.active]="vistaActiva() === 'EDIFICIO'">
+        <span class="nav-icon">⌂</span><span>Pisos y áreas</span>
+      </button>
+      <button type="button" (click)="cambiarVista('REDES')" [class.active]="vistaActiva() === 'REDES'">
+        <span class="nav-icon">⌁</span><span>Equipos de red</span>
+        <span class="nav-count">{{ equiposRed().length }}</span>
+      </button>
+      <button type="button" (click)="cambiarVista('TALLER')" [class.active]="vistaActiva() === 'TALLER'">
+        <span class="nav-icon">⚒</span><span>Taller y scrap</span>
+        <span class="nav-count">{{ componentesRetirados().length }}</span>
+      </button>
+      <button type="button" (click)="cambiarVista('REPORTES')" [class.active]="vistaActiva() === 'REPORTES'">
+        <span class="nav-icon">▤</span><span>Reportes</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span class="status-dot"></span>
+      <span><strong>Sistema operativo</strong><small>Inventario actualizado</small></span>
+      <button type="button" class="sidebar-logout" (click)="cerrarSesion()">
+        <span aria-hidden="true">↪</span> Cerrar sesión
+      </button>
+    </div>
+  </aside>
+
+  <div class="main-shell">
+    <header class="topbar">
+      <div class="topbar-title">
+        <button
+          type="button"
+          class="menu-toggle"
+          [attr.aria-expanded]="menuMovilAbierto()"
+          aria-label="Abrir menú de navegación"
+          (click)="alternarMenuMovil()"
+        >
+          <span></span><span></span><span></span>
+        </button>
+        <h1>DOSEP DIGITAL</h1>
+      </div>
+    </header>
+
+    <div class="page-content">
+      <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
+        <section class="page-heading">
+          <div>
+            <span class="eyebrow">OPERACIONES</span>
+            <h2>Parque informático</h2>
+            <p>Encontrá un puesto y consultá su equipamiento en segundos.</p>
+          </div>
+          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PUESTO')">
+            <span aria-hidden="true">＋</span> Nuevo puesto
+          </button>
+        </section>
+
+        <section class="stats-grid" aria-label="Resumen del inventario">
+          <article class="stat-card">
+            <span class="stat-icon icon-indigo">▦</span>
+            <div><span>Puestos registrados</span><strong>{{ puestos().length }}</strong></div>
+          </article>
+          <article class="stat-card">
+            <span class="stat-icon icon-blue">⌂</span>
+            <div><span>Áreas activas</span><strong>{{ areas().length }}</strong></div>
+          </article>
+          <article class="stat-card">
+            <span class="stat-icon icon-amber">▣</span>
+            <div><span>Alertas de stock</span><strong>{{ componentesStockBajo() }}</strong></div>
+          </article>
+          <article class="stat-card">
+            <span class="stat-icon icon-green">⌁</span>
+            <div><span>Equipos de red</span><strong>{{ equiposRed().length }}</strong></div>
+          </article>
+        </section>
+
+        <section class="filter-panel">
+          <div class="filter-title">BUSCADOR</div>
+          <label class="search-control">
+            <span class="control-label">Buscar puesto</span>
+            <span class="input-with-icon">
+              <span aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                [ngModel]="busquedaParque()"
+                (ngModelChange)="busquedaParque.set($event)"
+                placeholder="Usuario, marca o número de serie"
               />
-            </svg>
-          </a>
-        }
-      </div>
-      <div class="social-links">
-        <a
-          href="https://github.com/angular/angular"
-          aria-label="Github"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="25"
-            height="24"
-            viewBox="0 0 25 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="Github"
-          >
-            <path
-              d="M12.3047 0C5.50634 0 0 5.50942 0 12.3047C0 17.7423 3.52529 22.3535 8.41332 23.9787C9.02856 24.0946 9.25414 23.7142 9.25414 23.3871C9.25414 23.0949 9.24389 22.3207 9.23876 21.2953C5.81601 22.0377 5.09414 19.6444 5.09414 19.6444C4.53427 18.2243 3.72524 17.8449 3.72524 17.8449C2.61064 17.082 3.81137 17.0973 3.81137 17.0973C5.04697 17.1835 5.69604 18.3647 5.69604 18.3647C6.79321 20.2463 8.57636 19.7029 9.27978 19.3881C9.39052 18.5924 9.70736 18.0499 10.0591 17.7423C7.32641 17.4347 4.45429 16.3765 4.45429 11.6618C4.45429 10.3185 4.9311 9.22133 5.72065 8.36C5.58222 8.04931 5.16694 6.79833 5.82831 5.10337C5.82831 5.10337 6.85883 4.77319 9.2121 6.36459C10.1965 6.09082 11.2424 5.95546 12.2883 5.94931C13.3342 5.95546 14.3801 6.09082 15.3644 6.36459C17.7023 4.77319 18.7328 5.10337 18.7328 5.10337C19.3942 6.79833 18.9789 8.04931 18.8559 8.36C19.6403 9.22133 20.1171 10.3185 20.1171 11.6618C20.1171 16.3888 17.2409 17.4296 14.5031 17.7321C14.9338 18.1012 15.3337 18.8559 15.3337 20.0084C15.3337 21.6552 15.3183 22.978 15.3183 23.3779C15.3183 23.7009 15.5336 24.0854 16.1642 23.9623C21.0871 22.3484 24.6094 17.7341 24.6094 12.3047C24.6094 5.50942 19.0999 0 12.3047 0Z"
-            />
-          </svg>
-        </a>
-        <a
-          href="https://x.com/angular"
-          aria-label="X"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="X"
-          >
-            <path
-              d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
-            />
-          </svg>
-        </a>
-        <a
-          href="https://www.youtube.com/channel/UCbn1OgGei-DV7aSRo_HaAiw"
-          aria-label="Youtube"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="29"
-            height="20"
-            viewBox="0 0 29 20"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="Youtube"
-          >
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M27.4896 1.52422C27.9301 1.96749 28.2463 2.51866 28.4068 3.12258C29.0004 5.35161 29.0004 10 29.0004 10C29.0004 10 29.0004 14.6484 28.4068 16.8774C28.2463 17.4813 27.9301 18.0325 27.4896 18.4758C27.0492 18.9191 26.5 19.2389 25.8972 19.4032C23.6778 20 14.8068 20 14.8068 20C14.8068 20 5.93586 20 3.71651 19.4032C3.11363 19.2389 2.56449 18.9191 2.12405 18.4758C1.68361 18.0325 1.36732 17.4813 1.20683 16.8774C0.613281 14.6484 0.613281 10 0.613281 10C0.613281 10 0.613281 5.35161 1.20683 3.12258C1.36732 2.51866 1.68361 1.96749 2.12405 1.52422C2.56449 1.08095 3.11363 0.76113 3.71651 0.596774C5.93586 0 14.8068 0 14.8068 0C14.8068 0 23.6778 0 25.8972 0.596774C26.5 0.76113 27.0492 1.08095 27.4896 1.52422ZM19.3229 10L11.9036 5.77905V14.221L19.3229 10Z"
-            />
-          </svg>
-        </a>
-      </div>
+            </span>
+          </label>
+          <label>
+            <span class="control-label">Piso</span>
+            <select [ngModel]="pisoSeleccionadoId()" (ngModelChange)="pisoSeleccionadoId.set($event); areaSeleccionadaId.set('TODAS')">
+              <option value="TODOS">Todos los pisos</option>
+              <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+            </select>
+          </label>
+          <label>
+            <span class="control-label">Área</span>
+            <select [ngModel]="areaSeleccionadaId()" (ngModelChange)="areaSeleccionadaId.set($event)">
+              <option value="TODAS">Todas las áreas</option>
+              <option *ngFor="let area of areasFiltradas()" [value]="area.id">{{ area.nombre }}</option>
+            </select>
+          </label>
+          <span class="results-count">{{ puestosFiltrados().length }} resultados</span>
+        </section>
+
+        <section class="section-heading">
+          <div><h3>Puestos de trabajo</h3><p>Seleccioná una ficha para consultar el detalle o imprimir sus etiquetas.</p></div>
+          <div class="view-switch" role="group" aria-label="Vista de puestos de trabajo">
+            <button
+              type="button"
+              [class.active]="vistaParque() === 'TARJETAS'"
+              [attr.aria-pressed]="vistaParque() === 'TARJETAS'"
+              (click)="vistaParque.set('TARJETAS')"
+            >▦ Tarjetas</button>
+            <button
+              type="button"
+              [class.active]="vistaParque() === 'LISTA'"
+              [attr.aria-pressed]="vistaParque() === 'LISTA'"
+              (click)="vistaParque.set('LISTA')"
+            >☷ Lista</button>
+          </div>
+        </section>
+
+        <section *ngIf="vistaParque() === 'TARJETAS'" class="workstation-grid">
+          <article *ngFor="let puesto of puestosFiltrados()" class="workstation-card">
+            <div class="workstation-heading">
+              <span class="record-icon">⌘</span>
+              <div class="workstation-title">
+                <span class="type-badge">PUESTO</span>
+                <h3>{{ puesto.nombrePuesto }}</h3>
+                <p>{{ puesto.usuarioAsignado }}</p>
+              </div>
+              <button
+                type="button"
+                class="icon-button danger-icon"
+                [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
+                (click)="eliminarPuesto(puesto.id)"
+              >×</button>
+            </div>
+            <div class="location-line"><span aria-hidden="true">⌖</span>{{ obtenerNombreAreaPiso(puesto.areaId) }}</div>
+            <div class="asset-code"><span>Código de seguimiento</span><code>{{ puesto.codigoSeguimiento }}</code></div>
+            <div class="component-summary">
+              <span class="control-label">Equipamiento instalado</span>
+              <div *ngIf="puesto.componentes.length; else sinComponentes" class="component-chips">
+                <span *ngFor="let componente of puesto.componentes" class="component-chip">
+                  {{ componente.tipo }}
+                  <small *ngIf="componente.codigoSeguimiento">{{ componente.codigoSeguimiento }}</small>
+                </span>
+              </div>
+              <ng-template #sinComponentes><p class="muted-copy">Sin componentes registrados.</p></ng-template>
+            </div>
+            <div class="card-actions">
+              <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">Ver ficha</button>
+              <button type="button" class="text-button" (click)="verFicha(puesto.id)">Ver detalles <span aria-hidden="true">→</span></button>
+            </div>
+            <details class="quick-replace">
+              <summary>Reemplazar componente desde stock</summary>
+              <div class="quick-replace-controls">
+                <select #selectTipo aria-label="Tipo de componente a reemplazar">
+                  <option *ngFor="let tipo of tiposPerifericos" [value]="tipo">{{ tipo }}</option>
+                </select>
+                <select #selectInsumo aria-label="Seleccionar insumo de stock">
+                  <option value="">Seleccionar insumo</option>
+                  <option *ngFor="let insumo of stock()" [value]="insumo.id" [disabled]="insumo.cantidadDisponible <= 0">
+                    {{ insumo.marca }} {{ insumo.especificacion }} ({{ insumo.cantidadDisponible }})
+                  </option>
+                </select>
+                <button type="button" class="secondary-button" (click)="ejecutarReemplazo(puesto.id, selectTipo.value, selectInsumo.value)">Reemplazar</button>
+              </div>
+            </details>
+          </article>
+          <div *ngIf="puestosFiltrados().length === 0" class="empty-state">
+            <span class="empty-icon">⌕</span>
+            <h3>No encontramos puestos</h3>
+            <p>Probá cambiar los filtros o registrar un nuevo puesto.</p>
+            <button type="button" class="secondary-button" (click)="abrirModal('NUEVO_PUESTO')">Crear puesto</button>
+          </div>
+        </section>
+
+        <section *ngIf="vistaParque() === 'LISTA'" class="data-panel workstation-list-panel" aria-label="Puestos de trabajo en lista">
+          <div class="table-scroll">
+            <table class="data-table workstation-list-table">
+              <thead>
+                <tr>
+                  <th>Puesto / Usuario</th>
+                  <th>Ubicación</th>
+                  <th>Componentes</th>
+                  <th>ID único del puesto</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let puesto of puestosFiltrados()">
+                  <td>
+                    <strong>{{ puesto.nombrePuesto }}</strong>
+                    <small>{{ puesto.usuarioAsignado }}</small>
+                  </td>
+                  <td>{{ obtenerNombreAreaPiso(puesto.areaId) }}</td>
+                  <td>
+                    <div *ngIf="puesto.componentes.length; else listaSinComponentes" class="list-component-tags">
+                      <span *ngFor="let componente of puesto.componentes" class="list-component-tag">
+                        {{ componente.tipo }}
+                        <code *ngIf="componente.codigoSeguimiento">{{ componente.codigoSeguimiento }}</code>
+                      </span>
+                    </div>
+                    <ng-template #listaSinComponentes><span class="muted-copy">Sin componentes</span></ng-template>
+                  </td>
+                  <td><code class="list-tracking-code">{{ puesto.codigoSeguimiento }}</code></td>
+                  <td>
+                    <div class="list-actions">
+                      <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">Ver ficha</button>
+                      <details class="quick-replace list-quick-replace">
+                        <summary>Reemplazar</summary>
+                        <div class="quick-replace-controls">
+                          <select #listaSelectTipo aria-label="Tipo de componente a reemplazar">
+                            <option *ngFor="let tipo of tiposPerifericos" [value]="tipo">{{ tipo }}</option>
+                          </select>
+                          <select #listaSelectInsumo aria-label="Seleccionar insumo de stock">
+                            <option value="">Seleccionar insumo</option>
+                            <option *ngFor="let insumo of stock()" [value]="insumo.id" [disabled]="insumo.cantidadDisponible <= 0">
+                              {{ insumo.marca }} {{ insumo.especificacion }} ({{ insumo.cantidadDisponible }})
+                            </option>
+                          </select>
+                          <button type="button" class="secondary-button" (click)="ejecutarReemplazo(puesto.id, listaSelectTipo.value, listaSelectInsumo.value)">Confirmar</button>
+                        </div>
+                      </details>
+                      <button
+                        type="button"
+                        class="icon-button danger-icon"
+                        [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
+                        (click)="eliminarPuesto(puesto.id)"
+                      >×</button>
+                    </div>
+                  </td>
+                </tr>
+                <tr *ngIf="puestosFiltrados().length === 0">
+                  <td colspan="5" class="table-empty">
+                    No encontramos puestos. Probá cambiar los filtros o registrá un nuevo puesto.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section *ngIf="puestoFicha(); let ficha" class="modal-backdrop" (click)="cerrarFicha()">
+          <article class="dialog detail-dialog" role="dialog" aria-modal="true" aria-labelledby="ficha-titulo" (click)="$event.stopPropagation()">
+            <header class="dialog-header">
+              <div><span class="eyebrow">FICHA DEL ACTIVO</span><h2 id="ficha-titulo">{{ ficha.nombrePuesto }}</h2></div>
+              <button type="button" class="icon-button" aria-label="Cerrar ficha" (click)="cerrarFicha()">×</button>
+            </header>
+            <div class="detail-meta">
+              <span><small>Usuario asignado</small><strong>{{ ficha.usuarioAsignado }}</strong></span>
+              <span><small>Ubicación</small><strong>{{ obtenerNombreAreaPiso(ficha.areaId) }}</strong></span>
+              <span><small>Código del puesto</small><strong>{{ ficha.codigoSeguimiento }}</strong></span>
+            </div>
+            <button type="button" class="primary-button print-button" (click)="imprimirEtiquetasDePuesto(ficha.id)">
+              🖨️ Imprimir etiquetas de este puesto
+            </button>
+            <p *ngIf="errorEtiquetas()" class="inline-error" role="alert">{{ errorEtiquetas() }}</p>
+            <section class="detail-section">
+              <div class="section-heading">
+                <div><h3>Componentes instalados</h3><p>{{ ficha.componentes.length }} elementos registrados</p></div>
+                <button type="button" class="secondary-button add-component-button" (click)="abrirModalComponente(ficha.id)">＋ Añadir Componente</button>
+              </div>
+              <ul class="detail-list">
+                <li *ngFor="let componente of ficha.componentes">
+                  <span class="record-icon small-record-icon">▣</span>
+                  <span class="detail-component"><strong>{{ componente.tipo }}</strong><small>{{ componente.marca }}{{ componente.modelo ? ' · ' + componente.modelo : '' }} · {{ componente.especificacion }}</small></span>
+                  <span *ngIf="tiposPerifericosExternos.includes(componente.tipo)" class="tracking-badge">
+                    ID único · {{ componente.codigoSeguimiento || 'Pendiente' }}
+                  </span>
+                  <span *ngIf="componente.numeroSerie" class="serial-code">S/N {{ componente.numeroSerie }}</span>
+                </li>
+                <li *ngIf="ficha.componentes.length === 0" class="muted-copy">No hay componentes registrados.</li>
+              </ul>
+            </section>
+            <section class="detail-section">
+              <div class="section-heading"><div><h3>Actividad reciente</h3><p>Historial auditado del puesto</p></div></div>
+              <ul class="detail-list movement-list">
+                <li *ngFor="let movimiento of movimientosPuestoFicha()">
+                  <span class="movement-dot"></span>
+                  <span class="detail-component"><strong>{{ movimiento.tipo }}</strong><small>{{ movimiento.detalle }}</small></span>
+                  <time>{{ movimiento.fecha | date:'dd/MM/yy HH:mm' }}</time>
+                </li>
+                <li *ngIf="movimientosPuestoFicha().length === 0" class="muted-copy">No hay movimientos registrados.</li>
+              </ul>
+            </section>
+          </article>
+        </section>
+      </main>
+
+      <main *ngIf="vistaActiva() === 'STOCK'" class="page-view">
+        <section class="page-heading">
+          <div><span class="eyebrow">ABASTECIMIENTO</span><h2>Depósito y stock</h2><p>Controlá existencias y anticipá necesidades de reposición.</p></div>
+          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_STOCK')">＋ Ingresar stock</button>
+        </section>
+        <section class="stats-grid compact-stats">
+          <article class="stat-card"><span class="stat-icon icon-indigo">▣</span><div><span>Productos</span><strong>{{ stock().length }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon icon-amber">!</span><div><span>Stock bajo</span><strong>{{ componentesStockBajo() }}</strong></div></article>
+        </section>
+        <section class="data-panel">
+          <div class="panel-heading"><div><h3>Inventario disponible</h3><p>Existencias actuales por tipo y producto.</p></div></div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Tipo</th><th>Producto</th><th>Disponibilidad</th><th>Stock mínimo</th><th>Estado</th><th><span class="sr-only">Acciones</span></th></tr></thead>
+              <tbody>
+                <tr *ngFor="let insumo of stock()">
+                  <td><span class="type-badge">{{ insumo.tipo }}</span></td>
+                  <td><strong>{{ insumo.marca }}</strong><small>{{ insumo.especificacion }}</small></td>
+                  <td><strong>{{ insumo.cantidadDisponible }}</strong> unidades</td>
+                  <td>{{ insumo.stockMinimo }} unidades</td>
+                  <td><span class="status-badge" [class.status-warning]="insumo.cantidadDisponible <= insumo.stockMinimo" [class.status-ok]="insumo.cantidadDisponible > insumo.stockMinimo">
+                    {{ insumo.cantidadDisponible <= insumo.stockMinimo ? 'Reponer' : 'Disponible' }}
+                  </span></td>
+                  <td><button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + insumo.marca" (click)="eliminarInsumo(insumo.id)">×</button></td>
+                </tr>
+                <tr *ngIf="stock().length === 0"><td colspan="6" class="table-empty">Todavía no hay productos en stock.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <main *ngIf="vistaActiva() === 'EDIFICIO'" class="page-view">
+        <section class="page-heading">
+          <div><span class="eyebrow">ORGANIZACIÓN</span><h2>Pisos y áreas</h2><p>Administrá la estructura física donde se encuentran los activos.</p></div>
+          <div class="heading-actions">
+            <button type="button" class="secondary-button" (click)="abrirModal('NUEVA_AREA')" [disabled]="!pisoSeleccionadoEdificio()">＋ Nueva área</button>
+            <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PISO')">＋ Nuevo piso</button>
+          </div>
+        </section>
+        <section class="building-layout">
+          <article class="data-panel building-panel">
+            <div class="panel-heading"><div><h3>Pisos</h3><p>{{ pisos().length }} niveles registrados</p></div></div>
+            <div class="building-list">
+              <button
+                *ngFor="let piso of pisos()"
+                type="button"
+                class="building-item"
+                [class.selected]="pisoSeleccionadoEdificio() === piso.id"
+                (click)="pisoSeleccionadoEdificio.set(piso.id)"
+              >
+                <span class="record-icon">⌂</span>
+                <span><strong>{{ piso.nombre }}</strong><small>Nivel {{ piso.nivel }}</small></span>
+                <span class="building-arrow">→</span>
+              </button>
+              <div *ngIf="pisos().length === 0" class="empty-inline">Aún no hay pisos. Creá el primero para comenzar.</div>
+            </div>
+          </article>
+          <article class="data-panel building-panel">
+            <div class="panel-heading">
+              <div><h3>{{ pisoSeleccionadoEdificio() ? obtenerNombrePiso(pisoSeleccionadoEdificio()) : 'Áreas' }}</h3><p>Áreas del piso seleccionado</p></div>
+              <span *ngIf="pisoSeleccionadoEdificio()" class="count-badge">{{ areasDelPisoEdificio().length }} áreas</span>
+            </div>
+            <div *ngIf="pisoSeleccionadoEdificio(); else seleccionarPiso" class="building-list">
+              <article *ngFor="let area of areasDelPisoEdificio()" class="area-item">
+                <span class="record-icon area-icon">⌖</span>
+                <span><strong>{{ area.nombre }}</strong><small>{{ obtenerNombrePiso(area.pisoId) }}</small></span>
+                <button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + area.nombre" (click)="eliminarArea(area.id)">×</button>
+              </article>
+              <div *ngIf="areasDelPisoEdificio().length === 0" class="empty-inline">Este piso todavía no tiene áreas.</div>
+            </div>
+            <ng-template #seleccionarPiso><div class="empty-inline">Seleccioná un piso para consultar sus áreas.</div></ng-template>
+          </article>
+        </section>
+      </main>
+
+      <main *ngIf="vistaActiva() === 'REDES'" class="page-view">
+        <section class="page-heading">
+          <div><span class="eyebrow">INFRAESTRUCTURA</span><h2>Equipos de red</h2><p>Switches, routers y puntos de acceso asignados por ubicación.</p></div>
+          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_EQUIPO_RED')">＋ Registrar equipo</button>
+        </section>
+        <section class="record-grid network-grid">
+          <article *ngFor="let equipo of equiposRed()" class="record-card">
+            <span class="record-icon">⌁</span>
+            <div class="record-info">
+              <span class="type-badge">{{ equipo.tipo }}</span>
+              <h3>{{ equipo.marca }} {{ equipo.modelo }}</h3>
+              <p>{{ obtenerNombreAreaPiso(equipo.areaId) }}</p>
+              <small>Código de seguimiento · <strong>{{ equipo.codigoSeguimiento }}</strong></small>
+            </div>
+            <button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + equipo.marca + ' ' + equipo.modelo" (click)="eliminarEquipoRed(equipo)">×</button>
+          </article>
+          <div *ngIf="equiposRed().length === 0" class="empty-state"><span class="empty-icon">⌁</span><h3>Sin equipos registrados</h3><p>Agregá equipos de red para mantenerlos organizados.</p></div>
+        </section>
+      </main>
+
+      <main *ngIf="vistaActiva() === 'TALLER'" class="page-view">
+        <section class="page-heading">
+          <div><span class="eyebrow">MANTENIMIENTO</span><h2>Taller y scrap</h2><p>Seguimiento de componentes retirados y su estado actual.</p></div>
+          <span class="count-badge">{{ componentesRetirados().length }} componentes</span>
+        </section>
+        <section class="record-grid">
+          <article *ngFor="let retirado of componentesRetirados()" class="record-card">
+            <span class="record-icon">⚒</span>
+            <div class="record-info">
+              <span class="status-badge" [class.status-danger]="retirado.estado === 'SCRAP'" [class.status-warning]="retirado.estado === 'REPARACION'">{{ retirado.estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}</span>
+              <h3>{{ retirado.componente.tipo }} · {{ retirado.componente.marca }}{{ retirado.componente.modelo ? ' · ' + retirado.componente.modelo : '' }}</h3>
+              <p>{{ retirado.componente.especificacion }}</p>
+              <small>Puesto: <strong>{{ retirado.puestoNombre }}</strong> · Retirado: {{ retirado.fechaRetiro | date:'dd/MM/yyyy HH:mm' }}</small>
+              <small *ngIf="retirado.componente.codigoSeguimiento">Código · {{ retirado.componente.codigoSeguimiento }}</small>
+            </div>
+            <label class="status-control">Estado
+              <select [ngModel]="retirado.estado" (ngModelChange)="cambiarEstadoRetirado(retirado.id, $event)">
+                <option *ngFor="let estado of estadosComponente" [ngValue]="estado">{{ estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}</option>
+              </select>
+            </label>
+          </article>
+          <div *ngIf="componentesRetirados().length === 0" class="empty-state"><span class="empty-icon">⚒</span><h3>Taller al día</h3><p>Los componentes retirados aparecerán aquí para su seguimiento.</p></div>
+        </section>
+      </main>
+
+      <main *ngIf="vistaActiva() === 'REPORTES'" class="page-view">
+        <section class="page-heading">
+          <div><span class="eyebrow">ANÁLISIS</span><h2>Reportes e historial</h2><p>Una vista general del inventario y sus movimientos recientes.</p></div>
+          <div class="heading-actions backup-actions">
+            <button type="button" class="secondary-button" (click)="exportarRespaldoJson()">Descargar respaldo JSON</button>
+            <ng-container *ngIf="authService.user()?.role === 'admin'">
+              <button type="button" class="secondary-button backup-file-button" [disabled]="backupImportando() || !inventarioVacio()" [title]="inventarioVacio() ? 'Importar inventario respaldado' : 'La importación solo se habilita cuando el servidor no tiene datos.'" (click)="backupFileInput.click()">Restaurar respaldo</button>
+              <input #backupFileInput class="sr-only" type="file" accept="application/json,.json" [disabled]="backupImportando() || !inventarioVacio()" (change)="importarRespaldoJson($event)" />
+            </ng-container>
+            <button type="button" class="primary-button" (click)="exportarInventarioExcel()">↓ Exportar a Excel</button>
+          </div>
+        </section>
+        <section class="stats-grid">
+          <article class="stat-card"><span class="stat-icon icon-indigo">⌂</span><div><span>Pisos</span><strong>{{ pisos().length }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon icon-blue">⌖</span><div><span>Áreas</span><strong>{{ areas().length }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon icon-green">▦</span><div><span>Puestos</span><strong>{{ puestos().length }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon icon-amber">▣</span><div><span>Productos</span><strong>{{ stock().length }}</strong></div></article>
+        </section>
+        <section *ngIf="authService.user()?.role === 'admin'" class="data-panel admin-users-panel">
+          <div class="panel-heading"><div><h3>Usuarios del sistema</h3><p>Administrá el acceso individual al inventario compartido.</p></div></div>
+          <form class="user-create-form" (ngSubmit)="crearUsuario()">
+            <label>Usuario
+              <input name="newUsername" required minlength="3" autocomplete="off" [ngModel]="nuevoUsuario().username" (ngModelChange)="actualizarNuevoUsuario('username', $event)" />
+            </label>
+            <label>Contraseña inicial
+              <input name="newPassword" type="password" required minlength="12" autocomplete="new-password" [ngModel]="nuevoUsuario().password" (ngModelChange)="actualizarNuevoUsuario('password', $event)" />
+            </label>
+            <label>Permisos
+              <select name="newRole" [ngModel]="nuevoUsuario().role" (ngModelChange)="actualizarNuevoUsuario('role', $event)">
+                <option value="operator">Operador</option>
+                <option value="admin">Administrador</option>
+              </select>
+            </label>
+            <button type="submit" class="primary-button">Crear usuario</button>
+          </form>
+          <div class="admin-user-list">
+            <article *ngFor="let usuario of authService.usuarios()">
+              <strong>{{ usuario.username }}</strong><span>{{ usuario.role === 'admin' ? 'Administrador' : 'Operador' }}</span>
+            </article>
+          </div>
+        </section>
+        <section class="data-panel history-panel">
+          <div class="panel-heading"><div><h3>Actividad del inventario</h3><p>Movimientos auditados más recientes</p></div></div>
+          <div *ngIf="historial().length === 0" class="empty-inline">Todavía no hay movimientos para mostrar.</div>
+          <article *ngFor="let movimiento of historial()" class="history-item">
+            <span class="movement-dot" [class.movement-success]="movimiento.tipo === 'INGRESO_STOCK' || movimiento.tipo === 'ALTA_PUESTO' || movimiento.tipo === 'ALTA_COMPONENTE'"></span>
+            <div><strong>{{ movimiento.detalle }}</strong><small>{{ movimiento.tipo }}</small></div>
+            <time>{{ movimiento.fecha | date:'dd/MM/yyyy HH:mm' }}</time>
+          </article>
+        </section>
+      </main>
     </div>
   </div>
-</main>
+</div>
 
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * The content above * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * is only a placeholder * * * * * * * * * * * -->
-<!-- * * * * * * * * * * and can be replaced.  * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * End of Placeholder  * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
+<section *ngIf="modalActivo()" class="modal-backdrop" (click)="cerrarModal()">
+  <article class="dialog form-dialog" role="dialog" aria-modal="true" aria-labelledby="form-dialog-title" (click)="$event.stopPropagation()">
+    <header class="dialog-header">
+      <div>
+        <span class="eyebrow">NUEVO REGISTRO</span>
+        <h2 id="form-dialog-title">{{ modalActivo() === 'NUEVO_PUESTO' ? 'Registrar puesto' : modalActivo() === 'NUEVO_COMPONENTE' ? 'Relevar componente instalado' : modalActivo() === 'NUEVO_STOCK' ? 'Ingresar stock' : modalActivo() === 'NUEVO_PISO' ? 'Crear piso' : modalActivo() === 'NUEVA_AREA' ? 'Crear área' : 'Registrar equipo de red' }}</h2>
+      </div>
+      <button type="button" class="icon-button" aria-label="Cerrar formulario" (click)="cerrarModal()">×</button>
+    </header>
+    <p class="dialog-intro">{{ modalActivo() === 'NUEVO_COMPONENTE' ? 'Registrá manualmente el equipamiento existente. Esta acción no consulta ni modifica el stock de repuestos.' : 'Completá los datos para mantener el inventario actualizado.' }}</p>
+    <p *ngIf="errorFormulario()" class="inline-error" role="alert">{{ errorFormulario() }}</p>
 
+    <div *ngIf="modalActivo() === 'NUEVO_PUESTO'" class="form-fields">
+      <label>Piso
+        <select [ngModel]="pisoSeleccionadoFormPuesto()" (ngModelChange)="cambiarPisoFormularioPuesto($event)">
+          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+        </select>
+      </label>
+      <label>Área
+        <select [(ngModel)]="nuevoPuesto.areaId" [disabled]="!pisoSeleccionadoFormPuesto()">
+          <option value="">Seleccionar área</option><option *ngFor="let area of areasFormPuesto()" [value]="area.id">{{ area.nombre }}</option>
+        </select>
+      </label>
+      <label class="field-full">Nombre del puesto<input [(ngModel)]="nuevoPuesto.nombrePuesto" placeholder="Ej. Puesto 3 · Cajas" /></label>
+      <label class="field-full">Usuario asignado<input [(ngModel)]="nuevoPuesto.usuarioAsignado" placeholder="Nombre y apellido" /></label>
+      <p *ngIf="pisos().length === 0" class="form-hint">Primero necesitás registrar un piso y un área.</p>
+    </div>
 
-<router-outlet />
+    <div *ngIf="modalActivo() === 'NUEVO_COMPONENTE'" class="form-fields">
+      <label>Tipo de componente
+        <select [ngModel]="nuevoComponenteManual().tipo" (ngModelChange)="actualizarTipoComponenteManual($event)">
+          <option *ngFor="let tipo of tiposComponentesPuesto" [ngValue]="tipo">{{ tipo }}</option>
+        </select>
+      </label>
+      <label>Marca
+        <input [ngModel]="nuevoComponenteManual().marca" (ngModelChange)="actualizarCampoComponenteManual('marca', $event)" placeholder="Ej. Dell" />
+      </label>
+      <label>Modelo
+        <input [ngModel]="nuevoComponenteManual().modelo" (ngModelChange)="actualizarCampoComponenteManual('modelo', $event)" placeholder="Ej. P2419H" />
+      </label>
+      <label>Características
+        <input [ngModel]="nuevoComponenteManual().caracteristicas" (ngModelChange)="actualizarCampoComponenteManual('caracteristicas', $event)" placeholder="N.º de serie, capacidad, pulgadas..." />
+      </label>
+      <p class="form-hint field-full" *ngIf="tipoComponenteManualExterno()">Se generará un código de seguimiento único para su etiqueta.</p>
+      <p class="form-hint field-full" *ngIf="!tipoComponenteManualExterno()">Los componentes internos se guardan sin código de seguimiento.</p>
+    </div>
+
+    <div *ngIf="modalActivo() === 'NUEVO_STOCK'" class="form-fields">
+      <label>Tipo de componente<select [(ngModel)]="nuevoStock.tipo"><option *ngFor="let tipo of tiposPerifericos" [ngValue]="tipo">{{ tipo }}</option></select></label>
+      <label class="field-full">Marca<input [(ngModel)]="nuevoStock.marca" placeholder="Ej. Kingston" /></label>
+      <label class="field-full">Especificación<input [(ngModel)]="nuevoStock.especificacion" placeholder="Ej. SSD 500GB NVMe" /></label>
+      <label>Cantidad a ingresar<input type="number" min="1" step="1" [(ngModel)]="nuevoStock.cantidadDisponible" /></label>
+      <label>Umbral de stock bajo<input type="number" min="0" step="1" [(ngModel)]="nuevoStock.stockMinimo" /></label>
+    </div>
+
+    <div *ngIf="modalActivo() === 'NUEVO_PISO'" class="form-fields">
+      <label>Nombre del piso<input [(ngModel)]="nuevoPiso.nombre" placeholder="Ej. Planta baja" /></label>
+      <label>Nivel<input type="number" [(ngModel)]="nuevoPiso.nivel" /></label>
+    </div>
+
+    <div *ngIf="modalActivo() === 'NUEVA_AREA'" class="form-fields">
+      <label>Piso
+        <select [ngModel]="pisoSeleccionadoEdificio()" (ngModelChange)="pisoSeleccionadoEdificio.set($event)">
+          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+        </select>
+      </label>
+      <label>Nombre del área<input [(ngModel)]="nuevaArea.nombre" placeholder="Ej. Tesorería" /></label>
+    </div>
+
+    <div *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'" class="form-fields">
+      <label>Tipo de equipo<select [(ngModel)]="nuevoEquipoRed.tipo"><option *ngFor="let tipo of tiposEquipoRed" [ngValue]="tipo">{{ tipo }}</option></select></label>
+      <label>Piso
+        <select [ngModel]="pisoSeleccionadoFormEquipoRed()" (ngModelChange)="cambiarPisoFormularioEquipoRed($event)">
+          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+        </select>
+      </label>
+      <label>Área
+        <select [(ngModel)]="nuevoEquipoRed.areaId" [disabled]="!pisoSeleccionadoFormEquipoRed()">
+          <option value="">Seleccionar área</option><option *ngFor="let area of areasFormEquipoRed()" [value]="area.id">{{ area.nombre }}</option>
+        </select>
+      </label>
+      <label class="field-full">Marca<input [(ngModel)]="nuevoEquipoRed.marca" placeholder="Ej. Cisco" /></label>
+      <label class="field-full">Modelo<input [(ngModel)]="nuevoEquipoRed.modelo" placeholder="Ej. CBS110" /></label>
+    </div>
+
+    <footer class="dialog-actions">
+      <button type="button" class="secondary-button" (click)="cerrarModal()">Cancelar</button>
+      <button *ngIf="modalActivo() === 'NUEVO_PUESTO'" type="button" class="primary-button" (click)="guardarNuevoPuesto()">Guardar puesto</button>
+      <button *ngIf="modalActivo() === 'NUEVO_COMPONENTE'" type="button" class="primary-button" (click)="guardarComponenteManual()">Guardar componente</button>
+      <button *ngIf="modalActivo() === 'NUEVO_STOCK'" type="button" class="primary-button" (click)="guardarNuevoStock()">Agregar al stock</button>
+      <button *ngIf="modalActivo() === 'NUEVO_PISO'" type="button" class="primary-button" (click)="guardarPiso()">Crear piso</button>
+      <button *ngIf="modalActivo() === 'NUEVA_AREA'" type="button" class="primary-button" (click)="guardarArea()">Crear área</button>
+      <button *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'" type="button" class="primary-button" (click)="guardarEquipoRed()">Registrar equipo</button>
+    </footer>
+  </article>
+</section>
+
+<section *ngIf="confirmacionPendiente(); let confirmacion" class="modal-backdrop confirmation-backdrop" (click)="cancelarEliminacion()">
+  <article class="dialog confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" (click)="$event.stopPropagation()">
+    <span class="confirmation-icon">!</span>
+    <h2 id="confirm-title">¿Eliminar este registro?</h2>
+    <p><strong>{{ confirmacion.nombre }}</strong> se eliminará del inventario. Esta acción no se puede deshacer.</p>
+    <p *ngIf="confirmacion.tipo === 'PISO' || confirmacion.tipo === 'AREA'" class="form-hint">No se podrá eliminar si tiene elementos relacionados.</p>
+    <footer class="dialog-actions">
+      <button type="button" class="secondary-button" (click)="cancelarEliminacion()">Cancelar</button>
+      <button type="button" class="danger-button" (click)="confirmarEliminacion()">Eliminar</button>
+    </footer>
+  </article>
+</section>
+
+<div *ngIf="toast(); let mensaje" class="toast-notification" [class.toast-error]="mensaje.tipo === 'error'" role="status" aria-live="polite">
+  <span class="toast-icon">{{ mensaje.tipo === 'success' ? '✓' : '!' }}</span>
+  <span>{{ mensaje.mensaje }}</span>
+  <button type="button" class="toast-close" aria-label="Cerrar notificación" (click)="cerrarToast()">×</button>
+</div>
+
+<section *ngIf="puestoEtiquetas(); let puesto" class="print-sheet" aria-label="Etiquetas para imprimir">
+  <h1>Etiquetas · {{ puesto.nombrePuesto }}</h1>
+  <div class="print-label-grid">
+    <article class="asset-label qr-label">
+      <img #qrImage [src]="codigoQrPuesto()" [alt]="'Código QR del puesto ' + puesto.nombrePuesto" />
+      <div class="label-copy"><span>PUESTO DE TRABAJO</span><strong>{{ puesto.nombrePuesto }}</strong><small>{{ puesto.usuarioAsignado }} · {{ obtenerNombreArea(puesto.areaId) }}</small><code>{{ puesto.codigoSeguimiento }}</code></div>
+    </article>
+    <article *ngFor="let componente of componentesEtiquetas()" class="asset-label barcode-label">
+      <span class="label-type">{{ componente.tipo }}</span><strong>{{ componente.marca }} {{ componente.modelo || '' }} {{ componente.especificacion }}</strong>
+      <svg #barcodeSvg [attr.data-code]="componente.codigoSeguimiento" class="barcode-svg"></svg>
+      <code class="barcode-tracking-code">{{ componente.codigoSeguimiento }}</code>
+    </article>
+  </div>
+  <p *ngIf="componentesEtiquetas().length === 0" class="print-empty-state">Este puesto no tiene periféricos externos con código de seguimiento para etiquetar.</p>
+</section>
+</ng-container>
+
+<section *ngIf="!authService.initialized()" class="auth-screen" aria-live="polite">
+  <article class="auth-card"><span class="eyebrow">DOSEP · GESTIÓN IT</span><h1>Conectando con el servidor</h1><p>Verificando el acceso al inventario.</p></article>
+</section>
+
+<section *ngIf="authService.initialized() && !authService.user()" class="auth-screen">
+  <form class="auth-card" (ngSubmit)="iniciarSesion()">
+    <img class="auth-logo" src="/logos/dosep.png" width="1024" height="235" alt="DOSEP" />
+    <span class="eyebrow">GESTIÓN DE PARQUE IT</span>
+    <h1>{{ authService.setupRequired() ? 'Configurar administrador' : 'Iniciar sesión' }}</h1>
+    <p>{{ authService.setupRequired() ? 'Creá la primera cuenta administradora para este servidor.' : 'Ingresá con tu cuenta institucional de Gestión IT.' }}</p>
+    <label>Usuario
+      <input name="username" autocomplete="username" required minlength="3" [ngModel]="authUsuario()" (ngModelChange)="authUsuario.set($event)" />
+    </label>
+    <label>Contraseña
+      <input name="password" type="password" [attr.autocomplete]="authService.setupRequired() ? 'new-password' : 'current-password'" [attr.minlength]="authService.setupRequired() ? 12 : 1" required [ngModel]="authContrasena()" (ngModelChange)="authContrasena.set($event)" />
+    </label>
+    <p *ngIf="authService.error()" class="inline-error" role="alert">{{ authService.error() }}</p>
+    <button *ngIf="authService.error()" type="button" class="text-button auth-retry" (click)="reintentarConexion()">Reintentar conexión</button>
+    <button type="submit" class="primary-button" [disabled]="authService.pending()">
+      {{ authService.pending() ? 'Conectando…' : authService.setupRequired() ? 'Crear administrador' : 'Ingresar' }}
+    </button>
+  </form>
+</section>
+
+<section *ngIf="authService.user() && inventoryService.cargando()" class="auth-screen" aria-live="polite">
+  <article class="auth-card"><span class="eyebrow">DOSEP · GESTIÓN IT</span><h1>Cargando inventario</h1><p>Consultando los datos compartidos del servidor.</p></article>
+</section>
+
+<section *ngIf="authService.user() && inventoryService.errorCarga() && !inventoryService.cargando()" class="auth-screen">
+  <article class="auth-card"><span class="eyebrow">SERVIDOR NO DISPONIBLE</span><h1>No se pudo cargar el inventario</h1><p class="inline-error" role="alert">{{ inventoryService.errorCarga() }}</p><button type="button" class="primary-button" (click)="reintentarConexion()">Reintentar</button><button type="button" class="text-button auth-retry" (click)="cerrarSesion()">Cerrar sesión</button></article>
+</section>

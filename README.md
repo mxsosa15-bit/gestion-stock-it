@@ -1,59 +1,87 @@
-# GestionStockIt
+# Gestión IT DOSEP
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.24.
+Aplicación Angular con una API Express y almacenamiento compartido en PostgreSQL. El inventario se guarda en el esquema aislado `gestion_it`; otros sistemas deberían consumir la API y no modificar sus tablas directamente.
 
-## Development server
+## Requisitos
 
-To start a local development server, run:
+- Windows Server o Windows para desarrollo.
+- Node.js compatible con Angular 21 y npm.
+- PostgreSQL accesible desde el servidor de la aplicación.
+- Una base de datos y un usuario PostgreSQL dedicados a Gestión IT.
 
-```bash
-ng serve
+## Preparar PostgreSQL
+
+Creá una base y un usuario propios. Ejecutá estos comandos desde `psql` como administrador de PostgreSQL, reemplazando el marcador de contraseña localmente:
+
+```sql
+CREATE ROLE gestion_it_app LOGIN PASSWORD 'REEMPLAZAR_LOCALMENTE';
+CREATE DATABASE gestion_it OWNER gestion_it_app;
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+La aplicación crea las tablas dentro del esquema `gestion_it`; no requiere permisos de superusuario. No reutilices este usuario para otros sistemas.
 
-## Code scaffolding
+## Configuración local/servidor
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+Desde PowerShell, en la raíz del proyecto:
 
-```bash
-ng generate component component-name
+```powershell
+Copy-Item .env.example .env
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+Editá `.env` sin compartirlo ni guardarlo en Git:
 
-```bash
-ng generate --help
+```dotenv
+DATABASE_URL=postgres://gestion_it_app:CONTRASENA@localhost:5432/gestion_it
+SESSION_SECRET=GENERAR_UN_SECRETO_ALEATORIO_DE_AL_MENOS_32_CARACTERES
+PORT=4000
+PG_POOL_MAX=10
+PG_SSL=false
+COOKIE_SECURE=false
+TRUST_PROXY=false
 ```
 
-## Building
+Usá una contraseña PostgreSQL URL-encoded si contiene caracteres reservados. Para generar el secreto de sesión con Node:
 
-To build the project run:
-
-```bash
-ng build
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+En producción, habilitá HTTPS mediante el proxy inverso institucional, configurá `COOKIE_SECURE=true` y `TRUST_PROXY=true` únicamente si Express recibe solicitudes desde ese proxy confiable. No expongas PostgreSQL ni el puerto de desarrollo de Angular a la red de usuarios.
 
-## Running unit tests
+## Migración y desarrollo
 
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+Instalá dependencias, aplicá la migración y ejecutá Angular junto a la API de desarrollo:
 
-```bash
-ng test
+```powershell
+npm install
+npm run db:migrate
+npm start
 ```
 
-## Running end-to-end tests
+La interfaz estará disponible en `http://localhost:4200`; `/api` se redirige a la API local. La migración es idempotente. La primera persona que abra la aplicación configura la cuenta administradora inicial; luego esa cuenta puede crear cuentas locales desde **Reportes**.
 
-For end-to-end (e2e) testing, run:
+Para una base de prueba, la aplicación comienza con inventario vacío. Los datos de `localStorage` de instalaciones anteriores no se importan automáticamente. La restauración desde JSON está limitada a administradores y solo funciona mientras el inventario del servidor esté vacío.
 
-```bash
-ng e2e
+## Compilación y ejecución
+
+```powershell
+npm test -- --watch=false
+npm run build
+$env:NODE_ENV = "production"
+npm run serve:ssr:gestion-stock-it
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+La instancia Express sirve la aplicación Angular compilada y la API en el mismo puerto (`PORT`, por defecto `4000`). En un servidor compartido, publicá la aplicación detrás del proxy HTTPS institucional y asigná a cada sistema su propio esquema PostgreSQL, usuario y credenciales.
 
-## Additional Resources
+## Respaldo y recuperación
 
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+- **Respaldo completo recomendado:** programá `pg_dump` de la base `gestion_it` en una ubicación de respaldo controlada, con retención y pruebas de restauración periódicas.
+- **Respaldo operativo:** una persona puede descargar el inventario en JSON desde **Reportes**. Es un respaldo del contenido del inventario, no de cuentas ni sesiones. La importación JSON está pensada para inicializar una base vacía.
+- Restringí el acceso a los respaldos; contienen información sobre puestos, usuarios asignados y equipamiento.
+
+## Pruebas
+
+```powershell
+npm test -- --watch=false
+npm run build
+```

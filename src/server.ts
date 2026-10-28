@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import {
   AngularNodeAppEngine,
   createNodeRequestHandler,
@@ -6,23 +7,20 @@ import {
 } from '@angular/ssr/node';
 import express from 'express';
 import { join } from 'node:path';
+import { createDatabasePool, verifyDatabase } from './server/database';
+import { createInventoryApi } from './server/inventory-api';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
+app.set('trust proxy', process.env['TRUST_PROXY'] === 'true' ? 1 : false);
 const angularApp = new AngularNodeAppEngine();
-
-/**
- * Example Express Rest API endpoints can be defined here.
- * Uncomment and define endpoints as necessary.
- *
- * Example:
- * ```ts
- * app.get('/api/{*splat}', (req, res) => {
- *   // Handle API request
- * });
- * ```
- */
+const databasePool = createDatabasePool();
+app.use(express.json({ limit: '5mb' }));
+app.use(
+  '/api',
+  createInventoryApi(databasePool, process.env['SESSION_SECRET'] ?? ''),
+);
 
 /**
  * Serve static files from /browser
@@ -53,13 +51,17 @@ app.use((req, res, next) => {
  */
 if (isMainModule(import.meta.url) || process.env['pm_id']) {
   const port = process.env['PORT'] || 4000;
-  app.listen(port, (error) => {
-    if (error) {
-      throw error;
-    }
-
-    console.log(`Node Express server listening on http://localhost:${port}`);
-  });
+  verifyDatabase(databasePool)
+    .then(() => {
+      app.listen(port, (error) => {
+        if (error) throw error;
+        console.log(`Node Express server listening on http://localhost:${port}`);
+      });
+    })
+    .catch((error: unknown) => {
+      console.error('No se pudo conectar con PostgreSQL o falta aplicar la migración.', error);
+      process.exitCode = 1;
+    });
 }
 
 /**
