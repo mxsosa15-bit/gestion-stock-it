@@ -160,6 +160,38 @@ describe('InventoryService', () => {
     expect(puesto.codigoSeguimiento).toBe('');
     expect(puesto.componentes[0]?.codigoSeguimiento).toBeUndefined();
     expect(puesto.componentes[1]).not.toHaveProperty('codigoSeguimiento');
+    expect(service.personas()).toContainEqual(
+      expect.objectContaining({
+        nombre: 'Juan',
+        areaId: 'area-1',
+        puestoId: puesto.id,
+      }),
+    );
+  });
+
+  it('creates a person automatically with a workstation and prevents duplicate assignments', () => {
+    const created = service.crearPuestoTrabajo({
+      areaId: 'area-1',
+      nombrePuesto: 'Puesto nuevo',
+      usuarioAsignado: 'Juan',
+      componentes: [],
+    });
+
+    expect(service.personas()).toContainEqual({
+      id: expect.stringMatching(/^persona-/),
+      nombre: 'Juan',
+      areaId: 'area-1',
+      puestoId: created.id,
+    });
+    expect(() =>
+      service.crearPuestoTrabajo({
+        areaId: 'area-1',
+        nombrePuesto: 'Puesto duplicado',
+        usuarioAsignado: 'JUAN',
+        componentes: [],
+      }),
+    ).toThrow('Usá Transferencias para reubicarla.');
+    expect(service.puestos()).toHaveLength(2);
   });
 
   it('adds surveyed components without changing stock and defers external codes to the server', () => {

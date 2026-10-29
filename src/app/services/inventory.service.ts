@@ -10,16 +10,20 @@ import {
   EstadoComponenteRetirado,
   HistorialMovimiento,
   Piso,
+  PersonaInventario,
   PuestoTrabajo,
+  SolicitudTransferenciaInventario,
   StockInsumo,
   TipoEquipoRed,
   TipoMovimiento,
   TipoPeriferico,
+  TransferenciaInventario,
 } from '../models/inventory.model';
 
 export interface InventoryData {
   pisos: Piso[];
   areas: Area[];
+  personas: PersonaInventario[];
   stock: StockInsumo[];
   puestos: PuestoTrabajo[];
   equiposRed: EquipoRed[];
@@ -39,6 +43,10 @@ interface InventoryResponse {
   payload: InventoryData;
 }
 
+interface TransferResponse extends InventoryResponse {
+  transferenciaId: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -50,6 +58,7 @@ export class InventoryService {
 
   readonly pisos = signal<Piso[]>([]);
   readonly areas = signal<Area[]>([]);
+  readonly personas = signal<PersonaInventario[]>([]);
   readonly stock = signal<StockInsumo[]>([]);
   readonly puestos = signal<PuestoTrabajo[]>([]);
   readonly equiposRed = signal<EquipoRed[]>([]);
@@ -158,21 +167,25 @@ export class InventoryService {
   private esInventario(value: unknown): value is InventoryData {
     if (!value || typeof value !== 'object') return false;
     const inventory = value as Record<string, unknown>;
-    return [
-      'pisos',
-      'areas',
-      'stock',
-      'puestos',
-      'equiposRed',
-      'componentesRetirados',
-      'historial',
-    ].every((key) => Array.isArray(inventory[key]));
+    return (
+      [
+        'pisos',
+        'areas',
+        'stock',
+        'puestos',
+        'equiposRed',
+        'componentesRetirados',
+        'historial',
+      ].every((key) => Array.isArray(inventory[key])) &&
+      (inventory['personas'] === undefined || Array.isArray(inventory['personas']))
+    );
   }
 
   private obtenerInventario(): InventoryData {
     return {
       pisos: this.pisos(),
       areas: this.areas(),
+      personas: this.personas(),
       stock: this.stock(),
       puestos: this.puestos(),
       equiposRed: this.equiposRed(),
@@ -184,6 +197,21 @@ export class InventoryService {
   private aplicarInventario(inventory: InventoryData): void {
     this.pisos.set(inventory.pisos);
     this.areas.set(inventory.areas);
+    this.personas.set(
+      inventory.personas ??
+        inventory.puestos.flatMap((puesto) =>
+          puesto.usuarioAsignado.trim()
+            ? [
+                {
+                  id: `persona-${puesto.id}`,
+                  nombre: puesto.usuarioAsignado.trim(),
+                  areaId: puesto.areaId,
+                  puestoId: puesto.id,
+                },
+              ]
+            : [],
+        ),
+    );
     this.stock.set(inventory.stock);
     this.puestos.set(inventory.puestos);
     this.equiposRed.set(inventory.equiposRed);
@@ -267,6 +295,9 @@ export class InventoryService {
   }
 
   eliminarArea(areaId: string): void {
+    if (this.personas().some((persona) => persona.areaId === areaId)) {
+      throw new Error('No se puede eliminar esta área porque tiene personas asignadas.');
+    }
     if (this.puestos().some((puesto) => puesto.areaId === areaId)) {
       throw new Error(
         'No se puede eliminar esta área porque tiene puestos de trabajo registrados.',
@@ -359,6 +390,15 @@ export class InventoryService {
       codigoSeguimiento?: string;
     },
   ): PuestoTrabajo {
+    const assignedName = nuevoPuesto.usuarioAsignado.trim();
+    const existingPerson = this.personas().find(
+      (persona) => persona.nombre.trim().toLocaleLowerCase() === assignedName.toLocaleLowerCase(),
+    );
+    if (assignedName && existingPerson) {
+      throw new Error(
+        `La persona "${assignedName}" ya está registrada en un puesto. Usá Transferencias para reubicarla.`,
+      );
+    }
     const puesto: PuestoTrabajo = {
       ...nuevoPuesto,
       id: this.generarId('puesto'),
@@ -368,12 +408,71 @@ export class InventoryService {
       ),
     };
     this.puestos.update((puestos) => [...puestos, puesto]);
+    if (assignedName) {
+      this.personas.update((personas) => [
+        ...personas,
+        {
+          id: this.generarId('persona'),
+          nombre: assignedName,
+          areaId: puesto.areaId,
+          puestoId: puesto.id,
+        },
+      ]);
+    }
     this.registrarHistorial(
       'ALTA_PUESTO',
       `Se creó el puesto ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado})`,
       { puestoId: puesto.id },
     );
     return puesto;
+  }
+
+  async ejecutarTransferencia(
+    transferencia: SolicitudTransferenciaInventario,
+  ): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post<TransferResponse>('/api/transferencias', {
+          revision: this.revision,
+          ...transferencia,
+        }),
+      );
+      this.revision = Number(response.revision);
+      this.aplicarInventario(response.payload);
+      this.persistedSnapshot = this.obtenerInventario();
+      this.errorServidor.set('');
+    } catch (error: unknown) {
+      const remote = error instanceof HttpErrorResponse ? error.error : null;
+      if (
+        error instanceof HttpErrorResponse &&
+        error.status === 409 &&
+        remote &&
+        typeof remote.revision === 'string' &&
+        this.esInventario(remote.payload)
+      ) {
+        this.revision = Number(remote.revision);
+        this.aplicarInventario(remote.payload);
+        this.persistedSnapshot = this.obtenerInventario();
+      }
+      const message = this.obtenerMensajeError(
+        error,
+        'No se pudo completar la transferencia de inventario.',
+      );
+      this.errorServidor.set(message);
+      throw new Error(message);
+    }
+  }
+
+  async listarTransferencias(): Promise<TransferenciaInventario[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<TransferenciaInventario[]>('/api/transferencias'),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.obtenerMensajeError(error, 'No se pudo cargar el historial de transferencias.'),
+      );
+    }
   }
 
   agregarComponenteManual(
@@ -409,6 +508,11 @@ export class InventoryService {
     }
 
     this.puestos.update((puestos) => puestos.filter((item) => item.id !== puestoId));
+    this.personas.update((personas) =>
+      personas.map((persona) =>
+        persona.puestoId === puestoId ? { ...persona, puestoId: null } : persona,
+      ),
+    );
     this.registrarHistorial(
       'BAJA_PUESTO',
       `Se eliminó el puesto ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado})`,

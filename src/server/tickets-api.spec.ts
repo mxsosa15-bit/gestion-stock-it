@@ -3,6 +3,7 @@ import {
   parseTicketInput,
   parseTicketUpdate,
   parseWorkshopApprovalInput,
+  parseWorkshopReturnInput,
   parseWorkshopTransferInput,
 } from './tickets-api';
 
@@ -22,28 +23,74 @@ describe('parseTicketInput', () => {
         titulo: '  No conecta  ',
         descripcion: '  Revisar equipo  ',
         categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
       }),
     ).toEqual({
       titulo: 'No conecta',
       descripcion: 'Revisar equipo',
       categoria: 'Red',
+      puestoAfectadoId: 'puesto-1',
     });
   });
 
   it('rejects missing, blank, oversized, or non-string fields', () => {
     expect(parseTicketInput(null)).toBeNull();
-    expect(parseTicketInput({ titulo: ' ', descripcion: 'detalle', categoria: 'Red' })).toBeNull();
-    expect(parseTicketInput({ titulo: 'ok', descripcion: ' ', categoria: 'Red' })).toBeNull();
     expect(
-      parseTicketInput({ titulo: 'x'.repeat(201), descripcion: 'detalle', categoria: 'Red' }),
+      parseTicketInput({
+        titulo: ' ',
+        descripcion: 'detalle',
+        categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
+      }),
     ).toBeNull();
     expect(
-      parseTicketInput({ titulo: 'ok', descripcion: 'x'.repeat(10_001), categoria: 'Red' }),
+      parseTicketInput({
+        titulo: 'ok',
+        descripcion: ' ',
+        categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
+      }),
     ).toBeNull();
     expect(
-      parseTicketInput({ titulo: 'ok', descripcion: 'detalle', categoria: 'categoria libre' }),
+      parseTicketInput({
+        titulo: 'x'.repeat(201),
+        descripcion: 'detalle',
+        categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
+      }),
     ).toBeNull();
-    expect(parseTicketInput({ titulo: 12, descripcion: 'detalle', categoria: 'Red' })).toBeNull();
+    expect(
+      parseTicketInput({
+        titulo: 'ok',
+        descripcion: 'x'.repeat(10_001),
+        categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
+      }),
+    ).toBeNull();
+    expect(
+      parseTicketInput({
+        titulo: 'ok',
+        descripcion: 'detalle',
+        categoria: 'categoria libre',
+        puestoAfectadoId: 'puesto-1',
+      }),
+    ).toBeNull();
+    expect(
+      parseTicketInput({
+        titulo: 12,
+        descripcion: 'detalle',
+        categoria: 'Red',
+        puestoAfectadoId: 'puesto-1',
+      }),
+    ).toBeNull();
+    expect(
+      parseTicketInput({
+        titulo: 'ok',
+        descripcion: 'detalle',
+        categoria: 'Red',
+        puestoAfectadoId: ' ',
+      }),
+    ).toBeNull();
   });
 });
 
@@ -100,5 +147,16 @@ describe('parseWorkshopApprovalInput', () => {
     });
     expect(parseWorkshopApprovalInput({ aprobar: false, motivo: ' ' })).toBeNull();
     expect(parseWorkshopApprovalInput({ aprobar: 'true' })).toBeNull();
+  });
+});
+
+describe('parseWorkshopReturnInput', () => {
+  it('requires a non-blank resolution of at most 10000 characters', () => {
+    expect(parseWorkshopReturnInput({ solucion: '  Fuente reemplazada  ' })).toEqual({
+      solucion: 'Fuente reemplazada',
+    });
+    expect(parseWorkshopReturnInput({ solucion: '  ' })).toBeNull();
+    expect(parseWorkshopReturnInput({ solucion: 'x'.repeat(10_001) })).toBeNull();
+    expect(parseWorkshopReturnInput(null)).toBeNull();
   });
 });

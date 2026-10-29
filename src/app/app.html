@@ -90,6 +90,14 @@
           <span class="nav-count">{{ puestos().length }}</span>
         </button>
         <button
+          *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+          type="button"
+          (click)="cambiarVista('TRANSFERENCIAS')"
+          [class.active]="vistaActiva() === 'TRANSFERENCIAS'"
+        >
+          <span class="nav-icon">⇄</span><span>Transferencias</span>
+        </button>
+        <button
           *ngIf="authService.user()?.role !== 'solicitante'"
           type="button"
           (click)="cambiarVista('STOCK')"
@@ -122,7 +130,6 @@
           [class.active]="vistaActiva() === 'TALLER'"
         >
           <span class="nav-icon">⚒</span><span>Taller y scrap</span>
-          <span class="nav-count">{{ componentesRetirados().length }}</span>
         </button>
         <button
           *ngIf="authService.user()?.role !== 'solicitante'"
@@ -181,6 +188,14 @@
         } @placeholder {
         } @loading (after 100ms) {
           <p class="feedback" role="status">Cargando mesa de ayuda…</p>
+        }
+        @defer (when vistaActiva() === 'TRANSFERENCIAS') {
+          <app-inventory-transfers
+            *ngIf="vistaActiva() === 'TRANSFERENCIAS'"
+          ></app-inventory-transfers>
+        } @placeholder {
+        } @loading (after 100ms) {
+          <p class="feedback" role="status">Preparando el módulo de transferencias…</p>
         }
         <ng-container *ngIf="authService.user()?.role !== 'solicitante'">
           <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
@@ -786,10 +801,11 @@
               <div>
                 <span class="eyebrow">MANTENIMIENTO</span>
                 <h2>Taller y scrap</h2>
-                <p>Seguimiento de componentes retirados y su estado actual.</p>
+                <p>Gestioná las devoluciones de equipos derivados y el estado de componentes retirados.</p>
               </div>
               <span class="count-badge">{{ componentesRetirados().length }} componentes</span>
             </section>
+            <app-workshop-tickets></app-workshop-tickets>
             <section class="record-grid">
               <article *ngFor="let retirado of componentesRetirados()" class="record-card">
                 <span class="record-icon">⚒</span>

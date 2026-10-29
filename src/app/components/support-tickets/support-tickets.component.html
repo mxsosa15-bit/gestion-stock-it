@@ -26,6 +26,42 @@
         />
       </label>
       <label>
+        <span>Puesto o Usuario Afectado</span>
+        <select
+          name="puestoAfectadoId"
+          required
+          [ngModel]="puestoAfectadoId()"
+          (ngModelChange)="puestoAfectadoId.set($event)"
+          [disabled]="puestosLoading() || puestosAfectados().length === 0"
+        >
+          <option value="" disabled>
+            {{
+              puestosLoading()
+                ? 'Cargando puestos…'
+                : puestosAfectados().length
+                  ? 'Seleccioná el puesto o usuario afectado'
+                  : 'No hay puestos asignados a tu área'
+            }}
+          </option>
+          @for (puesto of puestosAfectados(); track puesto.id) {
+            <option [value]="puesto.id">
+              {{
+                puesto.usuarioAsignado === puesto.nombrePuesto
+                  ? puesto.usuarioAsignado
+                  : puesto.usuarioAsignado + ' · ' + puesto.nombrePuesto
+              }}
+            </option>
+          }
+        </select>
+        @if (puestosError()) {
+          <span class="feedback feedback-error" role="alert">{{ puestosError() }}</span>
+        } @else if (!puestosLoading() && puestosAfectados().length === 0) {
+          <span class="feedback" role="status">
+            No hay puestos cargados para esta área. Contactá a un operador para actualizar el inventario.
+          </span>
+        }
+      </label>
+      <label>
         <span>Categoría</span>
         <select
           name="categoria"
@@ -73,6 +109,10 @@
                 <time>{{ ticket.fecha_creacion | date: 'dd/MM/yyyy HH:mm' }}</time>
               </header>
               <p class="ticket-description">{{ ticket.descripcion }}</p>
+              <p class="ticket-owner">
+                Área: <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
+                <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
+              </p>
               <ol class="status-steps" [attr.aria-label]="'Estado actual: ' + ticket.estado">
                 @for (estado of estados; track estado; let index = $index) {
                   <li
@@ -175,10 +215,17 @@
                         </button>
                       </form>
                     }
-                  } @else if (transfer.estado === 'Aprobado') {
+                  } @else if (transfer.estado === 'En taller') {
                     <p class="feedback feedback-success">
                       Aprobado por {{ transfer.aprobado_por_nombre }} ·
                       {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
+                      El equipo ya figura en taller; el operador registrará la devolución y
+                      finalizará el reclamo.
+                    </p>
+                  } @else if (transfer.estado === 'Devuelto') {
+                    <p class="feedback feedback-success">
+                      Devolución registrada por {{ transfer.devuelto_por_nombre }} ·
+                      {{ transfer.devuelto_at | date: 'dd/MM/yyyy HH:mm' }}.
                     </p>
                   } @else {
                     <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
@@ -268,7 +315,8 @@
             <p class="ticket-description">{{ ticket.descripcion }}</p>
             <p class="ticket-owner">
               Solicitante: <strong>{{ ticket.usuario_nombre }}</strong> · Área:
-              <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong>
+              <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
+              <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
             </p>
 
             @if (ticket.taller; as transfer) {
@@ -279,10 +327,16 @@
                 </p>
                 @if (transfer.estado === 'Pendiente') {
                   <p class="feedback">Esperando la aprobación autenticada del solicitante.</p>
-                } @else if (transfer.estado === 'Aprobado') {
+                } @else if (transfer.estado === 'En taller') {
                   <p class="feedback feedback-success">
                     Aprobado por {{ transfer.aprobado_por_nombre }} ·
                     {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
+                    El equipo está en taller; la devolución se registra desde esa sección.
+                  </p>
+                } @else if (transfer.estado === 'Devuelto') {
+                  <p class="feedback feedback-success">
+                    Devolución registrada por {{ transfer.devuelto_por_nombre }} ·
+                    {{ transfer.devuelto_at | date: 'dd/MM/yyyy HH:mm' }}.
                   </p>
                 } @else {
                   <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
@@ -300,6 +354,14 @@
                 >
                   {{ busyTicketId() === ticket.id ? 'Actualizando…' : 'Tomar reclamo' }}
                 </button>
+              } @else if (ticket.taller?.estado === 'En taller') {
+                <p class="feedback">
+                  El reclamo se mantiene abierto hasta registrar la devolución desde Taller y scrap.
+                </p>
+              } @else if (ticket.taller?.estado === 'Pendiente') {
+                <p class="feedback">
+                  El reclamo no puede terminarse hasta que el solicitante responda sobre la derivación.
+                </p>
               } @else {
                 @if (resolvingTicketId() === ticket.id) {
                   <form class="resolution-form" (ngSubmit)="terminar(ticket)">
@@ -330,7 +392,7 @@
                   </button>
                 }
               }
-              @if (ticket.taller?.estado !== 'Pendiente') {
+              @if (ticket.taller?.estado !== 'Pendiente' && ticket.taller?.estado !== 'En taller') {
                 @if (workshopTicketId() === ticket.id) {
                   <form class="resolution-form workshop-form" (ngSubmit)="enviarAlTaller(ticket)">
                     <h4>Identificar el equipo que se deriva</h4>
@@ -420,7 +482,9 @@
                 </header>
                 <p class="ticket-description">{{ ticket.descripcion }}</p>
                 <p class="ticket-owner">
-                  {{ ticket.usuario_nombre }} · {{ ticket.area_nombre ?? 'Sin área' }}
+                  {{ ticket.usuario_nombre }} · Área:
+                  <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
+                  <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
                 </p>
                 <p class="resolution"><strong>Solución:</strong> {{ ticket.solucion }}</p>
               </article>

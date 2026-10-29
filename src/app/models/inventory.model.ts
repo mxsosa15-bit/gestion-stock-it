@@ -47,6 +47,13 @@ export interface PuestoTrabajo {
   codigoSeguimiento: string;
 }
 
+export interface PersonaInventario {
+  id: string;
+  nombre: string;
+  areaId: string;
+  puestoId: string | null;
+}
+
 export interface EquipoRed {
   id: string;
   tipo: TipoEquipoRed;
@@ -96,4 +103,34 @@ export interface HistorialMovimiento {
   componenteRetiradoId?: string;
   cantidad: number;
   detalle: string;
+}
+
+export interface TransferenciaInventario {
+  id: string;
+  descripcion: string;
+  creadoAt: string;
+  creadoPor: string;
+  movimientos: TransferenciaMovimiento[];
+}
+
+export interface TransferenciaMovimiento {
+  id: string;
+  tipoEntidad: 'AREA' | 'PERSONA' | 'COMPONENTE' | 'EQUIPO_RED';
+  entidadId: string;
+  nombreEntidad: string;
+  origen: Record<string, string | null>;
+  destino: Record<string, string | null>;
+}
+
+export interface SolicitudTransferenciaInventario {
+  origenAreaId: string;
+  destinoAreaId: string | null;
+  destinoPuestoId: string | null;
+  nuevoPuesto: { nombrePuesto: string } | null;
+  personaIds: string[];
+  componentes: { puestoId: string; componenteId: string }[];
+  equipoRedIds: string[];
+  moverAreaCompleta: boolean;
+  destinoPisoId: string | null;
+  descripcion: string;
 }

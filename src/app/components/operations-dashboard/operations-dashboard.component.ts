@@ -73,7 +73,8 @@ export class OperationsDashboardComponent implements OnInit, AfterViewInit, OnDe
     () =>
       this.inventoryService
         .componentesRetirados()
-        .filter((component) => component.estado === 'REPARACION').length,
+        .filter((component) => component.estado === 'REPARACION').length +
+      this.tickets().filter((ticket) => ticket.taller?.estado === 'En taller').length,
   );
   readonly pendingApprovals = computed(
     () => this.tickets().filter((ticket) => ticket.taller?.estado === 'Pendiente').length,

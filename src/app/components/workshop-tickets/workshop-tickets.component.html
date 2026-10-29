@@ -1,0 +1,79 @@
+<section class="workshop-tickets" aria-labelledby="workshop-tickets-title">
+  <div class="section-heading">
+    <div>
+      <h3 id="workshop-tickets-title">Equipos derivados desde reclamos</h3>
+      <p>Al registrar la devolución, el reclamo se termina y queda guardada la solución.</p>
+    </div>
+    <button type="button" class="refresh-button" (click)="reintentar()">Actualizar</button>
+  </div>
+
+  @if (error()) {
+    <p class="feedback feedback-error" role="alert">{{ error() }}</p>
+  }
+  @if (notice()) {
+    <p class="feedback feedback-success" role="status">{{ notice() }}</p>
+  }
+  @if (loading()) {
+    <p class="empty-message" role="status">Cargando equipos derivados…</p>
+  } @else if (tickets().length === 0) {
+    <p class="empty-message">No hay equipos aprobados que estén actualmente en taller.</p>
+  } @else {
+    <div class="workshop-ticket-list">
+      @for (ticket of tickets(); track ticket.id) {
+        @if (ticket.taller; as transfer) {
+          <article class="workshop-ticket-card">
+            <header>
+              <div>
+                <span class="ticket-category">{{ ticket.categoria }} · {{ ticket.area_nombre ?? 'Sin área' }}</span>
+                <h4>{{ ticket.titulo }}</h4>
+              </div>
+              <span class="workshop-state">En taller</span>
+            </header>
+            <p class="ticket-description">{{ ticket.descripcion }}</p>
+            <dl>
+              <dt>Equipo</dt>
+              <dd>{{ transfer.equipo }}</dd>
+              <dt>Serie o patrimonio</dt>
+              <dd>{{ transfer.identificacion }}</dd>
+              <dt>Motivo del traslado</dt>
+              <dd>{{ transfer.detalle }}</dd>
+              <dt>Solicitante</dt>
+              <dd>{{ ticket.usuario_nombre }}</dd>
+              <dt>Área</dt>
+              <dd>{{ ticket.area_nombre ?? 'Sin área' }}</dd>
+              <dt>Puesto afectado</dt>
+              <dd>{{ ticket.nombre_afectado ?? 'No especificado' }}</dd>
+              <dt>Aprobado por</dt>
+              <dd>
+                {{ transfer.aprobado_por_nombre ?? ticket.usuario_nombre }}
+                @if (transfer.aprobado_at) {
+                  · {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}
+                }
+              </dd>
+            </dl>
+            <form (ngSubmit)="devolver(ticket)">
+              <label>
+                <span>Trabajo realizado / solución</span>
+                <textarea
+                  required
+                  maxlength="10000"
+                  rows="3"
+                  [ngModel]="solutions()[ticket.id] || ''"
+                  (ngModelChange)="actualizarSolucion(ticket.id, $event)"
+                  [name]="'solucion-' + ticket.id"
+                ></textarea>
+              </label>
+              <button
+                type="submit"
+                class="return-button"
+                [disabled]="busyTicketId() === ticket.id"
+              >
+                {{ busyTicketId() === ticket.id ? 'Registrando…' : 'Registrar devolución y terminar reclamo' }}
+              </button>
+            </form>
+          </article>
+        }
+      }
+    </div>
+  }
+</section>

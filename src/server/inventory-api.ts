@@ -9,6 +9,7 @@ import { requireRoles, type SessionUser, type SystemRole } from './session-user'
 export interface InventorySnapshot {
   pisos: unknown[];
   areas: unknown[];
+  personas?: Record<string, unknown>[];
   stock: Record<string, unknown>[];
   puestos: Record<string, unknown>[];
   equiposRed: Record<string, unknown>[];
@@ -36,6 +37,7 @@ const networkTypes = new Set(['SWITCH', 'ROUTER', 'AP']);
 const emptySnapshot: InventorySnapshot = {
   pisos: [],
   areas: [],
+  personas: [],
   stock: [],
   puestos: [],
   equiposRed: [],
@@ -50,7 +52,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isInventorySnapshot(value: unknown): value is InventorySnapshot {
   if (!isRecord(value)) return false;
   const snapshot = value as Record<string, unknown>;
-  const recordCollections = Object.keys(emptySnapshot);
+  const recordCollections = Object.keys(emptySnapshot).filter((key) => key !== 'personas');
   if (
     !recordCollections.every(
       (key) =>
@@ -59,6 +61,15 @@ function isInventorySnapshot(value: unknown): value is InventorySnapshot {
           (item) => isRecord(item) && typeof item['id'] === 'string' && item['id'].length > 0,
         ),
     )
+  ) {
+    return false;
+  }
+  if (
+    snapshot['personas'] !== undefined &&
+    (!Array.isArray(snapshot['personas']) ||
+      !(snapshot['personas'] as unknown[]).every(
+        (item) => isRecord(item) && typeof item['id'] === 'string' && item['id'].length > 0,
+      ))
   ) {
     return false;
   }
@@ -118,6 +129,18 @@ function ensureTrackingCode(value: unknown, prefix: string): string {
 export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapshot {
   return {
     ...snapshot,
+    personas:
+      snapshot.personas ??
+      snapshot.puestos.flatMap((puesto) => {
+        const name = typeof puesto['usuarioAsignado'] === 'string'
+          ? puesto['usuarioAsignado'].trim()
+          : '';
+        const id = typeof puesto['id'] === 'string' ? puesto['id'] : '';
+        const areaId = typeof puesto['areaId'] === 'string' ? puesto['areaId'] : '';
+        return name && id && areaId
+          ? [{ id: randomUUID(), nombre: name, areaId, puestoId: id }]
+          : [];
+      }),
     puestos: snapshot.puestos.map((puesto) => ({
       ...puesto,
       codigoSeguimiento: ensureTrackingCode(puesto['codigoSeguimiento'], 'PUESTO'),

@@ -7,6 +7,13 @@ interface TicketInput {
   titulo: string;
   descripcion: string;
   categoria: TicketCategory;
+  puestoAfectadoId: string;
+}
+
+interface AffectedWorkstationRecord {
+  id: string;
+  nombrePuesto: string;
+  usuarioAsignado: string;
 }
 
 interface TicketUpdate {
@@ -25,20 +32,26 @@ interface WorkshopApprovalInput {
   motivo: string | null;
 }
 
+interface WorkshopReturnInput {
+  solucion: string;
+}
+
 interface WorkshopTransferRecord {
   id: string;
   equipo: string;
   identificacion: string;
   detalle: string;
-  estado: 'Pendiente' | 'Aprobado' | 'Rechazado';
+  estado: 'Pendiente' | 'En taller' | 'Devuelto' | 'Rechazado';
   solicitado_at: string;
   solicitado_por_nombre: string;
   aprobado_at: string | null;
   aprobado_por_nombre: string | null;
   motivo_rechazo: string | null;
+  devuelto_at: string | null;
+  devuelto_por_nombre: string | null;
 }
 
-interface TicketRecord extends TicketInput {
+interface TicketRecord extends Omit<TicketInput, 'puestoAfectadoId'> {
   id: string;
   estado: 'Abierto' | 'En proceso' | 'Terminado';
   solucion: string | null;
@@ -49,6 +62,8 @@ interface TicketRecord extends TicketInput {
   inventory_area_id: string | null;
   usuario_nombre: string;
   area_nombre: string | null;
+  puesto_afectado_id: string | null;
+  nombre_afectado: string | null;
   taller: WorkshopTransferRecord | null;
 }
 
@@ -59,6 +74,8 @@ export function parseTicketInput(value: unknown): TicketInput | null {
   const titulo = typeof body['titulo'] === 'string' ? body['titulo'].trim() : '';
   const descripcion = typeof body['descripcion'] === 'string' ? body['descripcion'].trim() : '';
   const categoria = body['categoria'];
+  const puestoAfectadoId =
+    typeof body['puestoAfectadoId'] === 'string' ? body['puestoAfectadoId'].trim() : '';
 
   if (
     !titulo ||
@@ -66,11 +83,13 @@ export function parseTicketInput(value: unknown): TicketInput | null {
     !descripcion ||
     descripcion.length > 10_000 ||
     typeof categoria !== 'string' ||
-    !isTicketCategory(categoria)
+    !isTicketCategory(categoria) ||
+    !puestoAfectadoId ||
+    puestoAfectadoId.length > 200
   ) {
     return null;
   }
-  return { titulo, descripcion, categoria };
+  return { titulo, descripcion, categoria, puestoAfectadoId };
 }
 
 export function parseWorkshopTransferInput(value: unknown): WorkshopTransferInput | null {
@@ -107,6 +126,14 @@ export function parseWorkshopApprovalInput(value: unknown): WorkshopApprovalInpu
   return { aprobar, motivo };
 }
 
+export function parseWorkshopReturnInput(value: unknown): WorkshopReturnInput | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const rawSolucion = (value as Record<string, unknown>)['solucion'];
+  const solucion = typeof rawSolucion === 'string' ? rawSolucion.trim() : '';
+  if (!solucion || solucion.length > 10_000) return null;
+  return { solucion };
+}
+
 export function parseTicketUpdate(value: unknown): TicketUpdate | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
@@ -126,6 +153,7 @@ export function parseTicketUpdate(value: unknown): TicketUpdate | null {
 const ticketOrder = `ORDER BY t.fecha_creacion DESC, t.id DESC`;
 const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estado, t.solucion,
                              t.fecha_creacion, t.fecha_resolucion, t.usuario_id,
+                             t.puesto_afectado_id, t.nombre_afectado,
                              u.area_id AS usuario_area_id,
                              a.inventory_area_id,
                              u.username AS usuario_nombre, a.nombre AS area_nombre,
@@ -141,11 +169,14 @@ const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estad
                           'solicitado_por_nombre', requester.username,
                           'aprobado_at', wt.aprobado_at,
                           'aprobado_por_nombre', approver.username,
-                          'motivo_rechazo', wt.motivo_rechazo
+                          'motivo_rechazo', wt.motivo_rechazo,
+                          'devuelto_at', wt.devuelto_at,
+                          'devuelto_por_nombre', returner.username
                         ) AS transferencia
                         FROM gestion_it.ticket_workshop_transfers AS wt
                         JOIN gestion_it.app_users AS requester ON requester.id = wt.solicitado_por
                         LEFT JOIN gestion_it.app_users AS approver ON approver.id = wt.aprobado_por
+                        LEFT JOIN gestion_it.app_users AS returner ON returner.id = wt.devuelto_por
                         WHERE wt.ticket_id = t.id
                         ORDER BY wt.solicitado_at DESC, wt.id DESC
                         LIMIT 1
@@ -235,11 +266,67 @@ export function createTicketsApi(pool: Pool): express.Router {
       return;
     }
     try {
-      const result = await pool.query<TicketRecord>(
+      const result = await pool.query<{ id: string }>(
         `${ticketSelect}
          WHERE a.inventory_area_id = $1
          ${ticketOrder}`,
         [areaId],
+      );
+      response.json(result.rows);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/areas/:areaId/puestos', requireRequester, async (request, response, next) => {
+    const areaId = request.params['areaId'];
+    const requesterAreaId = request.session.user?.areaId;
+    if (typeof areaId !== 'string' || !areaId.trim()) {
+      response.status(400).json({ error: 'Seleccioná un área válida.' });
+      return;
+    }
+    if (!requesterAreaId || areaId !== requesterAreaId) {
+      response.status(403).json({ error: 'Solo podés consultar los puestos de tu propia área.' });
+      return;
+    }
+
+    try {
+      const result = await pool.query<AffectedWorkstationRecord>(
+        `SELECT workstation->>'id' AS id,
+                COALESCE(NULLIF(btrim(workstation->>'nombrePuesto'), ''),
+                         NULLIF(btrim(workstation->>'usuarioAsignado'), '')) AS "nombrePuesto",
+                COALESCE(NULLIF(btrim(workstation->>'usuarioAsignado'), ''),
+                         NULLIF(btrim(workstation->>'nombrePuesto'), '')) AS "usuarioAsignado"
+         FROM gestion_it.areas AS area
+         JOIN gestion_it.inventory_snapshot AS snapshot ON snapshot.singleton_id = true
+         CROSS JOIN LATERAL jsonb_array_elements(
+           COALESCE(snapshot.payload->'puestos', '[]'::jsonb)
+         ) AS workstation
+         WHERE area.id = $1
+           AND area.activo = true
+           AND area.inventory_area_id IS NOT NULL
+           AND workstation->>'areaId' = area.inventory_area_id
+           AND NULLIF(btrim(workstation->>'id'), '') IS NOT NULL
+           AND (
+             NULLIF(btrim(workstation->>'nombrePuesto'), '') IS NOT NULL
+             OR NULLIF(btrim(workstation->>'usuarioAsignado'), '') IS NOT NULL
+           )
+         ORDER BY "usuarioAsignado", "nombrePuesto"`,
+        [areaId],
+      );
+      response.json(result.rows);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/tickets/workshop', requireOperator, async (_request, response, next) => {
+    try {
+      const result = await pool.query<TicketRecord>(
+        `${ticketSelect}
+         WHERE t.estado <> 'Terminado'
+           AND workshop.transferencia ->> 'estado' = 'En taller'
+         ${ticketOrder}`,
       );
       response.json(result.rows);
     } catch (error) {
@@ -269,7 +356,7 @@ export function createTicketsApi(pool: Pool): express.Router {
     if (!ticket) {
       response.status(400).json({
         error:
-          'Ingresá un título, una categoría válida y el detalle del problema (hasta 10000 caracteres).',
+          'Ingresá asunto, categoría, detalle del problema y el puesto afectado.',
       });
       return;
     }
@@ -283,18 +370,35 @@ export function createTicketsApi(pool: Pool): express.Router {
     }
 
     try {
-      const result = await pool.query<TicketRecord>(
-        `WITH nuevo_ticket AS (
-           INSERT INTO gestion_it.tickets (titulo, descripcion, categoria, usuario_id)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id
-         )
-         SELECT id FROM nuevo_ticket`,
-        [ticket.titulo, ticket.descripcion, ticket.categoria, user.id],
+      const result = await pool.query<{ id: string }>(
+        `INSERT INTO gestion_it.tickets
+           (titulo, descripcion, categoria, usuario_id, puesto_afectado_id, nombre_afectado)
+         SELECT $1, $2, $3, requester.id, workstation->>'id',
+                COALESCE(NULLIF(btrim(workstation->>'usuarioAsignado'), ''),
+                         NULLIF(btrim(workstation->>'nombrePuesto'), ''))
+         FROM gestion_it.app_users AS requester
+         JOIN gestion_it.areas AS area ON area.id = requester.area_id
+         JOIN gestion_it.inventory_snapshot AS snapshot ON snapshot.singleton_id = true
+         CROSS JOIN LATERAL jsonb_array_elements(
+           COALESCE(snapshot.payload->'puestos', '[]'::jsonb)
+         ) AS workstation
+         WHERE requester.id = $4
+           AND area.activo = true
+           AND workstation->>'id' = $5
+           AND workstation->>'areaId' = area.inventory_area_id
+           AND NULLIF(btrim(workstation->>'id'), '') IS NOT NULL
+           AND (
+             NULLIF(btrim(workstation->>'nombrePuesto'), '') IS NOT NULL
+             OR NULLIF(btrim(workstation->>'usuarioAsignado'), '') IS NOT NULL
+           )
+         RETURNING id`,
+        [ticket.titulo, ticket.descripcion, ticket.categoria, user.id, ticket.puestoAfectadoId],
       );
       const created = result.rows[0];
       if (!created) {
-        response.status(500).json({ error: 'No se pudo recuperar el reclamo creado.' });
+        response.status(400).json({
+          error: 'El puesto seleccionado no pertenece a tu área o ya no está disponible.',
+        });
         return;
       }
       const completeTicket = await loadTicket(pool, created.id);
@@ -357,7 +461,7 @@ export function createTicketsApi(pool: Pool): express.Router {
         error.code === '23505'
       ) {
         response.status(409).json({
-          error: 'Este reclamo ya tiene una derivación pendiente de aprobación.',
+          error: 'Este reclamo ya tiene una derivación pendiente o un equipo actualmente en taller.',
         });
         return;
       }
@@ -409,7 +513,7 @@ export function createTicketsApi(pool: Pool): express.Router {
             transferId,
             ticketId,
             requester.id,
-            approval.aprobar ? 'Aprobado' : 'Rechazado',
+            approval.aprobar ? 'En taller' : 'Rechazado',
             requester.id,
             approval.aprobar ? null : approval.motivo,
           ],
@@ -429,6 +533,102 @@ export function createTicketsApi(pool: Pool): express.Router {
         publishTicketEvent(ticket.id, 'workshop', ticket.usuario_area_id);
       } catch (error) {
         next(error);
+      }
+    },
+  );
+
+  router.patch(
+    '/tickets/:id/workshop/:transferId/return',
+    requireOperator,
+    async (request, response, next) => {
+      const workshopReturn = parseWorkshopReturnInput(request.body);
+      if (!workshopReturn) {
+        response.status(400).json({
+          error: 'Ingresá la solución o el trabajo realizado antes de registrar la devolución.',
+        });
+        return;
+      }
+
+      const ticketId = request.params['id'];
+      const transferId = request.params['transferId'];
+      const operator = request.session.user;
+      if (typeof ticketId !== 'string' || typeof transferId !== 'string') {
+        response.status(400).json({ error: 'El identificador de la derivación no es válido.' });
+        return;
+      }
+      if (!operator) {
+        response.status(401).json({ error: 'Iniciá sesión para continuar.' });
+        return;
+      }
+
+      const client = await pool.connect();
+      let transactionStarted = false;
+      try {
+        await client.query('BEGIN');
+        transactionStarted = true;
+        const ticket = await client.query<{ estado: string }>(
+          'SELECT estado FROM gestion_it.tickets WHERE id = $1 FOR UPDATE',
+          [ticketId],
+        );
+        if (!ticket.rows[0]) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(404).json({ error: 'No se encontró el reclamo.' });
+          return;
+        }
+        if (ticket.rows[0].estado === 'Terminado') {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(409).json({ error: 'El reclamo ya está terminado.' });
+          return;
+        }
+
+        const returned = await client.query(
+          `UPDATE gestion_it.ticket_workshop_transfers
+           SET estado = 'Devuelto', devuelto_por = $3, devuelto_at = now()
+           WHERE id = $1 AND ticket_id = $2 AND estado = 'En taller'
+           RETURNING id`,
+          [transferId, ticketId, operator.id],
+        );
+        if (!returned.rows[0]) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(409).json({
+            error: 'El equipo no figura en taller o ya se registró su devolución.',
+          });
+          return;
+        }
+
+        const completed = await client.query(
+          `UPDATE gestion_it.tickets
+           SET estado = 'Terminado',
+               solucion = $2,
+               fecha_resolucion = now()
+           WHERE id = $1 AND estado <> 'Terminado'
+           RETURNING id`,
+          [ticketId, workshopReturn.solucion],
+        );
+        if (!completed.rows[0]) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(409).json({ error: 'No se pudo terminar el reclamo.' });
+          return;
+        }
+
+        await client.query('COMMIT');
+        transactionStarted = false;
+        const completeTicket = await loadTicket(pool, ticketId);
+        if (!completeTicket) {
+          response.status(500).json({ error: 'No se pudo recuperar el reclamo actualizado.' });
+          return;
+        }
+        response.json(completeTicket);
+        publishTicketEvent(completeTicket.id, 'workshop', completeTicket.usuario_area_id);
+      } catch (error) {
+        if (transactionStarted) await client.query('ROLLBACK');
+        next(error);
+      } finally {
+        client.release();
       }
     },
   );
@@ -456,7 +656,8 @@ export function createTicketsApi(pool: Pool): express.Router {
              $2 <> 'Terminado'
              OR NOT EXISTS (
                SELECT 1 FROM gestion_it.ticket_workshop_transfers AS wt
-               WHERE wt.ticket_id = t.id AND wt.estado = 'Pendiente'
+               WHERE wt.ticket_id = t.id
+                 AND wt.estado IN ('Pendiente', 'En taller')
              )
            )
          RETURNING t.id`,
@@ -464,17 +665,20 @@ export function createTicketsApi(pool: Pool): express.Router {
       );
       const updated = result.rows[0];
       if (!updated) {
-        const pendingTransfer = await pool.query<{ pending: boolean }>(
-          `SELECT EXISTS (
-             SELECT 1 FROM gestion_it.ticket_workshop_transfers
-             WHERE ticket_id = $1 AND estado = 'Pendiente'
-           ) AS pending`,
+        const blockingTransfer = await pool.query<{ estado: string }>(
+          `SELECT estado
+           FROM gestion_it.ticket_workshop_transfers
+           WHERE ticket_id = $1 AND estado IN ('Pendiente', 'En taller')
+           ORDER BY solicitado_at DESC
+           LIMIT 1`,
           [request.params['id']],
         );
-        if (pendingTransfer.rows[0]?.pending) {
+        const blockedByWorkshopState = blockingTransfer.rows[0]?.estado;
+        if (blockedByWorkshopState) {
           response.status(409).json({
-            error:
-              'No podés terminar el reclamo hasta que el solicitante responda sobre el equipo.',
+            error: blockedByWorkshopState === 'Pendiente'
+              ? 'No podés terminar el reclamo hasta que el solicitante responda sobre el equipo.'
+              : 'No podés terminar el reclamo hasta registrar la devolución del equipo desde Taller y scrap.',
           });
           return;
         }

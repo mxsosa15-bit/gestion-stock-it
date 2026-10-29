@@ -1,0 +1,330 @@
+<main class="transfers-page">
+  <header class="transfers-heading">
+    <div>
+      <span class="eyebrow">PARQUE INFORMÁTICO</span>
+      <h2>Transferencias y mudanzas</h2>
+      <p>Reubicá personas y activos sin perder su trazabilidad ni el historial de reclamos.</p>
+    </div>
+    <span class="audit-pill">Movimientos auditados</span>
+  </header>
+
+  @if (error()) {
+    <p class="feedback feedback-error" role="alert">{{ error() }}</p>
+  }
+  @if (aviso()) {
+    <p class="feedback feedback-success" role="status">{{ aviso() }}</p>
+  }
+
+  <label class="whole-area-toggle">
+    <input
+      type="checkbox"
+      [checked]="mudanzaCompleta()"
+      (change)="cambiarMudanzaCompletaDesdeEvento($event)"
+    />
+    <span>
+      <strong>Mudanza de área completa</strong>
+      <small>Mover el área a otro piso con sus puestos, personas y activos.</small>
+    </span>
+  </label>
+
+  @if (mudanzaCompleta()) {
+    <section class="transfer-panels" aria-label="Origen y destino de mudanza de área">
+      <article class="location-panel origin-panel">
+        <div class="panel-heading">
+          <span class="panel-step">01</span>
+          <div>
+            <h3>Origen</h3>
+            <p>Seleccioná el área que cambia de piso.</p>
+          </div>
+        </div>
+        <label>
+          <span>Área</span>
+          <select
+            [ngModel]="origenAreaId()"
+            (ngModelChange)="cambiarOrigen($event)"
+            name="origenAreaCompleta"
+          >
+            <option value="">Seleccioná un área</option>
+            @for (area of areasOrigen(); track area.id) {
+              <option [value]="area.id">{{ area.nombre }} · {{ textoPiso(area.pisoId) }}</option>
+            }
+          </select>
+        </label>
+        @if (areaOrigen()) {
+          <div class="location-summary">
+            <span>Ubicación actual</span>
+            <strong>{{ areaOrigen()?.nombre }}</strong>
+            <small>{{ textoPiso(areaOrigen()?.pisoId ?? null) }}</small>
+          </div>
+        }
+      </article>
+
+      <div class="transfer-arrow" aria-hidden="true">→</div>
+
+      <article class="location-panel destination-panel">
+        <div class="panel-heading">
+          <span class="panel-step">02</span>
+          <div>
+            <h3>Destino</h3>
+            <p>El área conserva su identidad; cambia su piso.</p>
+          </div>
+        </div>
+        <label>
+          <span>Piso de destino</span>
+          <select
+            [ngModel]="destinoPisoId()"
+            (ngModelChange)="destinoPisoId.set($event)"
+            name="destinoPisoCompleto"
+            [disabled]="!areaOrigen()"
+          >
+            <option value="">Seleccioná un piso</option>
+            @for (piso of inventory.pisos(); track piso.id) {
+              @if (piso.id !== areaOrigen()?.pisoId) {
+                <option [value]="piso.id">{{ piso.nombre }}</option>
+              }
+            }
+          </select>
+        </label>
+        @if (areaOrigen() && destinoPisoId()) {
+          <div class="location-summary destination-summary">
+            <span>La mudanza trasladará</span>
+            <strong>{{ areaOrigen()?.nombre }}</strong>
+            <small>{{ textoPiso(areaOrigen()?.pisoId ?? null) }} → {{ textoPiso(destinoPisoId()) }}</small>
+          </div>
+        }
+      </article>
+    </section>
+  } @else {
+    <section class="transfer-panels" aria-label="Selección de origen y destino">
+      <article class="location-panel origin-panel">
+        <div class="panel-heading">
+          <span class="panel-step">01</span>
+          <div>
+            <h3>Origen</h3>
+            <p>Elegí un área para ver quiénes y qué activos están asignados.</p>
+          </div>
+        </div>
+        <label>
+          <span>Piso y área de origen</span>
+          <select
+            [ngModel]="origenAreaId()"
+            (ngModelChange)="cambiarOrigen($event)"
+            name="origenArea"
+          >
+            <option value="">Seleccioná un área</option>
+            @for (area of areasOrigen(); track area.id) {
+              <option [value]="area.id">{{ area.nombre }} · {{ textoPiso(area.pisoId) }}</option>
+            }
+          </select>
+        </label>
+
+        @if (!origenAreaId()) {
+          <p class="panel-empty">Seleccioná un área para cargar sus personas y activos.</p>
+        } @else {
+          <div class="selection-group">
+            <h4>Personas <small>{{ personasOrigen().length }}</small></h4>
+            @for (persona of personasOrigen(); track persona.id) {
+              <label class="selection-row">
+                <input
+                  type="checkbox"
+                  [checked]="personaSeleccionadaId() === persona.id"
+                  (change)="seleccionarPersonaDesdeEvento(persona, $event)"
+                />
+                <span>
+                  <strong>{{ persona.nombre }}</strong>
+                  <small>
+                    {{ nombrePuesto(persona) }}
+                  </small>
+                </span>
+                <span class="selection-kind">Persona</span>
+              </label>
+            } @empty {
+              <p class="panel-empty">No hay personas asignadas al área.</p>
+            }
+          </div>
+
+          <div class="selection-group">
+            <h4>Equipos y componentes <small>{{ componentesDisponibles().length }}</small></h4>
+            @for (item of componentesDisponibles(); track item.key) {
+              <label class="selection-row">
+                <input
+                  type="checkbox"
+                  [checked]="tieneComponenteSeleccionado(item.key)"
+                  (change)="seleccionarComponenteDesdeEvento(item.puestoId, item.componente.id, $event)"
+                />
+                <span>
+                  <strong>{{ item.componente.tipo }} · {{ item.componente.marca }} {{ item.componente.modelo ?? '' }}</strong>
+                  <small>{{ item.puestoNombre }} · {{ item.componente.especificacion }}</small>
+                </span>
+                <span class="selection-kind">Activo</span>
+              </label>
+            } @empty {
+              <p class="panel-empty">No hay componentes instalados en los puestos del área.</p>
+            }
+          </div>
+
+          <div class="selection-group">
+            <h4>Equipos de red <small>{{ redesOrigen().length }}</small></h4>
+            @for (equipo of redesOrigen(); track equipo.id) {
+              <label class="selection-row">
+                <input
+                  type="checkbox"
+                  [checked]="tieneEquipoRedSeleccionado(equipo.id)"
+                  (change)="seleccionarEquipoRedDesdeEvento(equipo.id, $event)"
+                />
+                <span>
+                  <strong>{{ equipo.tipo }} · {{ equipo.marca }} {{ equipo.modelo }}</strong>
+                  <small>{{ equipo.codigoSeguimiento }}</small>
+                </span>
+                <span class="selection-kind">Red</span>
+              </label>
+            } @empty {
+              <p class="panel-empty">No hay equipos de red asignados al área.</p>
+            }
+          </div>
+        }
+      </article>
+
+      <div class="transfer-arrow" aria-hidden="true">→</div>
+
+      <article class="location-panel destination-panel">
+        <div class="panel-heading">
+          <span class="panel-step">02</span>
+          <div>
+            <h3>Destino</h3>
+            <p>Las personas y los activos pueden trasladarse por separado.</p>
+          </div>
+        </div>
+        <label>
+          <span>Piso y área de destino</span>
+          <select
+            [ngModel]="destinoAreaId()"
+            (ngModelChange)="cambiarDestino($event)"
+            name="destinoArea"
+            [disabled]="!origenAreaId()"
+          >
+            <option value="">Seleccioná un área</option>
+            @for (area of areasDestino(); track area.id) {
+              <option [value]="area.id">{{ area.nombre }} · {{ textoPiso(area.pisoId) }}</option>
+            }
+          </select>
+        </label>
+
+        @if (destinoAreaId() && (personaSeleccionadaId() || componentesSeleccionados().length)) {
+          <label>
+            <span>Puesto de destino</span>
+            <select
+              [ngModel]="destinoPuestoId()"
+              (ngModelChange)="cambiarDestinoPuesto($event)"
+              name="destinoPuesto"
+            >
+              <option value="">Seleccioná un puesto</option>
+              @for (puesto of puestosDestino(); track puesto.id) {
+                <option
+                  [value]="puesto.id"
+                  [disabled]="personaSeleccionadaId() && puesto.usuarioAsignado.trim() !== ''"
+                >
+                  {{ puesto.nombrePuesto }}{{ puesto.usuarioAsignado ? ' · ' + puesto.usuarioAsignado : '' }}
+                </option>
+              }
+              <option value="__crear_puesto__">＋ Crear puesto nuevo…</option>
+            </select>
+          </label>
+          @if (destinoPuestoEsNuevo()) {
+            <label>
+              <span>Nombre del puesto nuevo</span>
+              <input
+                maxlength="200"
+                [ngModel]="nuevoPuestoNombre()"
+                (ngModelChange)="nuevoPuestoNombre.set($event)"
+                name="nuevoPuestoNombre"
+                placeholder="Ej. Puesto de recepción"
+              />
+            </label>
+          }
+        }
+        @if (areaDestino()) {
+          <div class="location-summary destination-summary">
+            <span>Ubicación seleccionada</span>
+            <strong>{{ areaDestino()?.nombre }}</strong>
+            <small>{{ textoPiso(areaDestino()?.pisoId ?? null) }}</small>
+          </div>
+        } @else {
+          <p class="panel-empty">Seleccioná el área que recibirá los elementos marcados.</p>
+        }
+      </article>
+    </section>
+  }
+
+  <section class="transfer-confirmation">
+    <div>
+      <span class="eyebrow">CONFIRMACIÓN</span>
+      <h3>{{ mudanzaCompleta() ? 'Mudanza completa de área' : 'Registrar movimiento' }}</h3>
+      <p>
+        {{ mudanzaCompleta()
+          ? (areaOrigen()?.nombre ?? 'Área sin seleccionar') + ' · ' + textoPiso(areaOrigen()?.pisoId ?? null) + ' → ' + textoPiso(destinoPisoId())
+          : (areaOrigen()?.nombre ?? 'Origen sin seleccionar') + ' → ' + (areaDestino()?.nombre ?? 'Destino sin seleccionar') }}
+      </p>
+    </div>
+    <label class="description-field">
+      <span>Motivo / observación</span>
+      <textarea
+        maxlength="1000"
+        rows="2"
+        required
+        [ngModel]="descripcion()"
+        (ngModelChange)="descripcion.set($event)"
+        name="descripcionTransferencia"
+        placeholder="Ej. Reorganización de puestos"
+      ></textarea>
+    </label>
+    <button
+      type="button"
+      class="execute-button"
+      [disabled]="guardando()"
+      (click)="ejecutarTransferencia()"
+    >
+      {{ guardando() ? 'Registrando…' : 'Ejecutar transferencia' }}
+    </button>
+  </section>
+
+  <section class="history-section" aria-labelledby="transfer-history-title">
+    <header class="history-heading">
+      <div>
+        <span class="eyebrow">TRAZABILIDAD</span>
+        <h3 id="transfer-history-title">Historial de movimientos</h3>
+      </div>
+      <button type="button" class="refresh-button" (click)="recargarHistorial()">Actualizar</button>
+    </header>
+    @if (cargandoHistorial()) {
+      <p class="panel-empty" role="status">Cargando movimientos…</p>
+    } @else if (historial().length === 0) {
+      <p class="panel-empty">Todavía no se registraron transferencias.</p>
+    } @else {
+      <div class="history-list">
+        @for (transferencia of historial(); track transferencia.id) {
+          <article class="history-card">
+            <header>
+              <div>
+                <strong>{{ transferencia.descripcion }}</strong>
+                <small>{{ transferencia.creadoPor }} · {{ transferencia.creadoAt | date: 'dd/MM/yyyy HH:mm' }}</small>
+              </div>
+              <span class="audit-pill">{{ transferencia.movimientos.length }} movimientos</span>
+            </header>
+            <ul>
+              @for (movimiento of transferencia.movimientos; track movimiento.id) {
+                <li>
+                  <span class="history-entity">{{ movimiento.tipoEntidad }}</span>
+                  <strong>{{ movimiento.nombreEntidad }}</strong>
+                  <span>{{ textoUbicacion(movimiento.origen) }}</span>
+                  <span aria-hidden="true">→</span>
+                  <span>{{ textoUbicacion(movimiento.destino) }}</span>
+                </li>
+              }
+            </ul>
+          </article>
+        }
+      </div>
+    }
+  </section>
+</main>

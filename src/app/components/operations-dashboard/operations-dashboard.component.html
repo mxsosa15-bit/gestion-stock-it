@@ -167,8 +167,8 @@
                   </span>
                 </div>
                 <p>
-                  {{ ticket.categoria }} <span aria-hidden="true">·</span>
-                  {{ ticket.usuario_nombre }}
+                  Área: {{ ticket.area_nombre ?? 'Sin área' }} <span aria-hidden="true">·</span>
+                  Afectado: {{ ticket.nombre_afectado ?? 'No especificado' }}
                 </p>
               </div>
               <time>{{ ticket.fecha_creacion | date: 'HH:mm' }}</time>

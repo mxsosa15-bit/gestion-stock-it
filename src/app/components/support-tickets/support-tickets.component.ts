@@ -12,6 +12,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../services/auth.service';
 import {
+  AffectedWorkstation,
   SupportTicket,
   TicketState,
   TicketsService,
@@ -49,6 +50,10 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   readonly titulo = signal('');
   readonly descripcion = signal('');
   readonly categoria = signal<TicketCategory>('Otros');
+  readonly puestoAfectadoId = signal('');
+  readonly puestosAfectados = signal<AffectedWorkstation[]>([]);
+  readonly puestosLoading = signal(false);
+  readonly puestosError = signal('');
   readonly drafts = signal<Record<string, string>>({});
   readonly workshopDrafts = signal<Record<string, WorkshopTransferInput>>({});
   readonly workshopTicketId = signal<string | null>(null);
@@ -88,6 +93,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     if (isPlatformBrowser(this.platformId)) this.conectarEventos();
     void this.cargarTickets();
+    if (this.isRequester()) void this.cargarPuestosAfectados();
   }
 
   ngOnDestroy(): void {
@@ -98,15 +104,20 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   async crearReclamo(): Promise<void> {
     const titulo = this.titulo().trim();
     const descripcion = this.descripcion().trim();
-    if (!titulo || !descripcion) {
-      this.error.set('Completá el asunto y describí el problema.');
+    if (!titulo || !descripcion || !this.puestoAfectadoId()) {
+      this.error.set('Completá el asunto, seleccioná el puesto afectado y describí el problema.');
       return;
     }
     this.error.set('');
     this.notice.set('');
     this.sending.set(true);
     try {
-      const creado = await this.ticketsService.crear(titulo, descripcion, this.categoria());
+      const creado = await this.ticketsService.crear(
+        titulo,
+        descripcion,
+        this.categoria(),
+        this.puestoAfectadoId(),
+      );
       this.tickets.update((tickets) => [
         creado,
         ...tickets.filter((item) => item.id !== creado.id),
@@ -114,6 +125,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       this.titulo.set('');
       this.descripcion.set('');
       this.categoria.set('Otros');
+      this.puestoAfectadoId.set('');
       this.mostrarAviso('El reclamo se envió al equipo de soporte.');
     } catch (error: unknown) {
       this.error.set(error instanceof Error ? error.message : 'No se pudo enviar el reclamo.');
@@ -234,6 +246,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       'Descripción',
       'Solicitante',
       'Área',
+      'Puesto o usuario afectado',
       'Solución',
       'Equipo enviado al taller',
       'Identificación',
@@ -247,6 +260,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       ticket.descripcion,
       ticket.usuario_nombre,
       ticket.area_nombre ?? '',
+      ticket.nombre_afectado ?? '',
       ticket.solucion ?? '',
       ticket.taller?.equipo ?? '',
       ticket.taller?.identificacion ?? '',
@@ -363,6 +377,26 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       );
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  private async cargarPuestosAfectados(): Promise<void> {
+    const areaId = this.authService.user()?.areaId;
+    if (!areaId) {
+      this.puestosError.set('Tu cuenta no tiene un área asignada. Contactá a la administración.');
+      return;
+    }
+
+    this.puestosLoading.set(true);
+    this.puestosError.set('');
+    try {
+      this.puestosAfectados.set(await this.ticketsService.listarPuestosDelArea(areaId));
+    } catch (error: unknown) {
+      this.puestosError.set(
+        error instanceof Error ? error.message : 'No se pudieron cargar los puestos de tu área.',
+      );
+    } finally {
+      this.puestosLoading.set(false);
     }
   }
 

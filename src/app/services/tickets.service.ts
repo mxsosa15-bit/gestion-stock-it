@@ -10,12 +10,14 @@ export interface WorkshopTransfer {
   equipo: string;
   identificacion: string;
   detalle: string;
-  estado: 'Pendiente' | 'Aprobado' | 'Rechazado';
+  estado: 'Pendiente' | 'En taller' | 'Devuelto' | 'Rechazado';
   solicitado_at: string;
   solicitado_por_nombre: string;
   aprobado_at: string | null;
   aprobado_por_nombre: string | null;
   motivo_rechazo: string | null;
+  devuelto_at: string | null;
+  devuelto_por_nombre: string | null;
 }
 
 export interface SupportTicket {
@@ -30,7 +32,15 @@ export interface SupportTicket {
   usuario_id: string;
   usuario_nombre: string;
   area_nombre: string | null;
+  puesto_afectado_id: string | null;
+  nombre_afectado: string | null;
   taller: WorkshopTransfer | null;
+}
+
+export interface AffectedWorkstation {
+  id: string;
+  nombrePuesto: string;
+  usuarioAsignado: string;
 }
 
 export interface WorkshopTransferInput {
@@ -71,14 +81,42 @@ export class TicketsService {
     }
   }
 
+  async listarPuestosDelArea(areaId: string): Promise<AffectedWorkstation[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<AffectedWorkstation[]>(
+          `/api/areas/${encodeURIComponent(areaId)}/puestos`,
+        ),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.obtenerMensaje(error, 'No se pudieron cargar los puestos de tu área.'),
+      );
+    }
+  }
+
+  async listarTaller(): Promise<SupportTicket[]> {
+    try {
+      return await firstValueFrom(this.http.get<SupportTicket[]>('/api/tickets/workshop'));
+    } catch (error: unknown) {
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los equipos en taller.'));
+    }
+  }
+
   async crear(
     titulo: string,
     descripcion: string,
     categoria: TicketCategory,
+    puestoAfectadoId: string,
   ): Promise<SupportTicket> {
     try {
       return await firstValueFrom(
-        this.http.post<SupportTicket>('/api/tickets', { titulo, descripcion, categoria }),
+        this.http.post<SupportTicket>('/api/tickets', {
+          titulo,
+          descripcion,
+          categoria,
+          puestoAfectadoId,
+        }),
       );
     } catch (error: unknown) {
       throw new Error(this.obtenerMensaje(error, 'No se pudo enviar el reclamo.'));
@@ -113,6 +151,25 @@ export class TicketsService {
     } catch (error: unknown) {
       throw new Error(
         this.obtenerMensaje(error, 'No se pudo registrar la decisión sobre el equipo.'),
+      );
+    }
+  }
+
+  async devolverDesdeTaller(
+    ticketId: string,
+    transferId: string,
+    solucion: string,
+  ): Promise<SupportTicket> {
+    try {
+      return await firstValueFrom(
+        this.http.patch<SupportTicket>(
+          `/api/tickets/${encodeURIComponent(ticketId)}/workshop/${encodeURIComponent(transferId)}/return`,
+          { solucion },
+        ),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.obtenerMensaje(error, 'No se pudo registrar la devolución y terminar el reclamo.'),
       );
     }
   }

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { createDatabasePool, verifyDatabase } from './server/database';
 import { createHardwareAssetsApi } from './server/hardware-assets-api';
 import { createInventoryApi } from './server/inventory-api';
+import { createInventoryTransfersApi } from './server/inventory-transfers-api';
 import { createTicketsApi } from './server/tickets-api';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
@@ -23,6 +24,7 @@ app.use(
   '/api',
   createInventoryApi(databasePool, process.env['SESSION_SECRET'] ?? ''),
 );
+app.use('/api', createInventoryTransfersApi(databasePool));
 app.use('/api', createTicketsApi(databasePool));
 app.use('/api', createHardwareAssetsApi(databasePool));
 

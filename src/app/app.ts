@@ -19,6 +19,8 @@ import { AreaAssetsExplorerComponent } from './components/area-assets-explorer/a
 import { SupportTicketsComponent } from './components/support-tickets/support-tickets.component';
 import { ReadOnlyDashboardComponent } from './components/read-only-dashboard/read-only-dashboard.component';
 import { OperationsDashboardComponent } from './components/operations-dashboard/operations-dashboard.component';
+import { WorkshopTicketsComponent } from './components/workshop-tickets/workshop-tickets.component';
+import { InventoryTransfersComponent } from './components/inventory-transfers/inventory-transfers.component';
 import {
   EquipoRed,
   EstadoComponenteRetirado,
@@ -47,7 +49,8 @@ type VistaActiva =
   | 'REDES'
   | 'TALLER'
   | 'PATRIMONIO'
-  | 'TICKETS';
+  | 'TICKETS'
+  | 'TRANSFERENCIAS';
 
 type TipoConfirmacion = 'PUESTO' | 'STOCK' | 'PISO' | 'AREA' | 'RED';
 
@@ -74,6 +77,8 @@ interface ToastNotification {
     SupportTicketsComponent,
     ReadOnlyDashboardComponent,
     OperationsDashboardComponent,
+    WorkshopTicketsComponent,
+    InventoryTransfersComponent,
   ],
   templateUrl: './app.html',
 })
@@ -205,6 +210,7 @@ export class App implements OnDestroy {
       TALLER: 'Taller y Scrap',
       PATRIMONIO: 'Etiquetas de patrimonio',
       TICKETS: 'Reclamos de soporte',
+      TRANSFERENCIAS: 'Transferencias y mudanzas',
     };
     return titulos[this.vistaActiva()];
   });
