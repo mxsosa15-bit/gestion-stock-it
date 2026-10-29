@@ -1,0 +1,209 @@
+<main class="asset-labels-page">
+  <section class="labels-heading">
+    <div>
+      <span class="eyebrow">INGRESO DE HARDWARE</span>
+      <h2>Series y etiquetas patrimoniales</h2>
+      <p>
+        Registrá el hardware recibido por serie; cuando lleguen las etiquetas, asociá cada número
+        patrimonial a su equipo e imprimí.
+      </p>
+    </div>
+    <button
+      type="button"
+      class="print-action"
+      [disabled]="printing() || printableAssets.length === 0"
+      (click)="imprimirSeleccionadas()"
+    >
+      {{ printing() ? 'Preparando…' : 'Imprimir etiquetas (' + printableAssets.length + ')' }}
+    </button>
+  </section>
+
+  <section class="entry-grid">
+    <form class="entry-card" (ngSubmit)="registrarEquipo()">
+      <h3>Registrar equipo</h3>
+      <label
+        >Tipo
+        <select
+          [ngModel]="newAsset().tipo"
+          name="tipo"
+          (ngModelChange)="actualizarNuevoAsset('tipo', $event)"
+        >
+          @for (type of types; track type) {
+            <option [value]="type">{{ type }}</option>
+          }
+        </select>
+      </label>
+      <label
+        >Marca<input
+          name="marca"
+          required
+          maxlength="120"
+          [ngModel]="newAsset().marca"
+          (ngModelChange)="actualizarNuevoAsset('marca', $event)"
+      /></label>
+      <label
+        >Modelo<input
+          name="modelo"
+          maxlength="120"
+          [ngModel]="newAsset().modelo"
+          (ngModelChange)="actualizarNuevoAsset('modelo', $event)"
+      /></label>
+      <label
+        >Número de serie<input
+          name="serie"
+          required
+          maxlength="200"
+          [ngModel]="newAsset().numeroSerie"
+          (ngModelChange)="actualizarNuevoAsset('numeroSerie', $event)"
+      /></label>
+      <label
+        >Especificación<input
+          name="especificacion"
+          maxlength="500"
+          [ngModel]="newAsset().especificacion"
+          (ngModelChange)="actualizarNuevoAsset('especificacion', $event)"
+      /></label>
+      <label
+        >Número patrimonial (si ya llegó)<input
+          name="patrimonio"
+          maxlength="100"
+          [ngModel]="newAsset().numeroPatrimonio"
+          (ngModelChange)="actualizarNuevoAsset('numeroPatrimonio', $event)"
+      /></label>
+      <button class="print-action" type="submit" [disabled]="saving()">Registrar por serie</button>
+    </form>
+
+    <form class="entry-card import-card">
+      <h3>Importar series desde CSV</h3>
+      <p>
+        El CSV necesita la columna <code>numero_serie</code>. Puede incluir
+        <code>tipo, marca, modelo, especificacion, numero_patrimonio</code>. Si faltan tipo o marca,
+        se usan estos valores predeterminados:
+      </p>
+      <label
+        >Tipo predeterminado
+        <select
+          [ngModel]="importDefaults().tipo"
+          name="tipoDefault"
+          (ngModelChange)="actualizarImportDefault('tipo', $event)"
+        >
+          @for (type of types; track type) {
+            <option [value]="type">{{ type }}</option>
+          }
+        </select>
+      </label>
+      <label
+        >Marca predeterminada<input
+          name="marcaDefault"
+          [ngModel]="importDefaults().marca"
+          (ngModelChange)="actualizarImportDefault('marca', $event)"
+      /></label>
+      <label
+        >Modelo predeterminado<input
+          name="modeloDefault"
+          [ngModel]="importDefaults().modelo"
+          (ngModelChange)="actualizarImportDefault('modelo', $event)"
+      /></label>
+      <label
+        >Archivo CSV
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          [disabled]="importing()"
+          (change)="importarCsv($event)"
+        />
+      </label>
+      @if (importing()) {
+        <p role="status">Importando equipos…</p>
+      }
+    </form>
+  </section>
+
+  @if (error()) {
+    <p class="feedback feedback-error" role="alert">{{ error() }}</p>
+  }
+  @if (notice()) {
+    <p class="feedback feedback-success" role="status">{{ notice() }}</p>
+  }
+
+  <section class="inventory-heading">
+    <div>
+      <h3>Hardware registrado</h3>
+      <p>La serie identifica el equipo; el número patrimonial identifica la etiqueta física.</p>
+    </div>
+    <label class="filter-field"
+      >Buscar
+      <input
+        type="search"
+        [value]="filter()"
+        (input)="actualizarFiltro($event)"
+        placeholder="Tipo, marca, serie o patrimonio"
+      />
+    </label>
+  </section>
+
+  @if (loading()) {
+    <p class="empty-message" role="status">Cargando equipos…</p>
+  } @else if (filteredAssets.length === 0) {
+    <p class="empty-message">No se encontraron equipos registrados.</p>
+  } @else {
+    <section class="assets-list" aria-label="Hardware registrado">
+      @for (asset of filteredAssets; track asset.id) {
+        <article class="asset-row">
+          <div class="asset-info">
+            <span class="asset-type">{{ asset.tipo }}</span>
+            <strong>{{ asset.marca }} {{ asset.modelo ?? '' }}</strong>
+            <small
+              >Serie: <code>{{ asset.numeroSerie }}</code></small
+            >
+            @if (asset.especificacion) {
+              <small>{{ asset.especificacion }}</small>
+            }
+          </div>
+          <label class="patrimony-input">
+            <span>Número de la etiqueta recibida</span>
+            <input
+              maxlength="100"
+              [value]="patrimonyDrafts()[asset.id] || asset.numeroPatrimonio || ''"
+              [attr.aria-label]="'Número patrimonial para serie ' + asset.numeroSerie"
+              (input)="actualizarPatrimonio(asset, $event)"
+            />
+          </label>
+          <button
+            type="button"
+            class="secondary-action"
+            [disabled]="patrimonyDrafts()[asset.id] === undefined || saving()"
+            (click)="guardarPatrimonio(asset)"
+          >
+            Asociar
+          </button>
+          <label class="select-label">
+            <input
+              type="checkbox"
+              [checked]="selectedIds().has(asset.id)"
+              [disabled]="!asset.numeroPatrimonio"
+              (change)="seleccionar(asset, $event)"
+            />
+            <span>Imprimir</span>
+          </label>
+        </article>
+      }
+    </section>
+  }
+
+  <section class="patrimony-print-sheet" aria-label="Etiquetas seleccionadas">
+    @for (asset of printableAssets; track asset.id) {
+      <article class="patrimony-label-card">
+        <span>{{ asset.tipo }} · {{ asset.marca }} {{ asset.modelo ?? '' }}</span>
+        <strong>S/N: {{ asset.numeroSerie }}</strong>
+        <svg
+          #patrimonyBarcode
+          [attr.data-code]="asset.numeroPatrimonio"
+          role="img"
+          [attr.aria-label]="'Código patrimonial ' + asset.numeroPatrimonio"
+        ></svg>
+        <code>{{ asset.numeroPatrimonio }}</code>
+      </article>
+    }
+  </section>
+</main>

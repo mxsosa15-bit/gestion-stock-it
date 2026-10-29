@@ -49,7 +49,7 @@ describe('InventoryService', () => {
   });
 
   it('replaces a workstation component, deducts stock, and records the movement', () => {
-    service.reemplazarComponente('puesto-1', 'DISCO_HDD', 'ssd-1');
+    service.reemplazarComponente('puesto-1', 'hdd-1', 'ssd-1', 'Falla: disco ruidoso');
 
     expect(service.stock()[0]?.cantidadDisponible).toBe(1);
     expect(service.puestos()[0]?.componentes).toEqual([
@@ -60,14 +60,17 @@ describe('InventoryService', () => {
         especificacion: 'SSD 480GB SATA3',
       },
     ]);
-    expect(service.historial().find((movimiento) => movimiento.tipo === 'REEMPLAZO_PUESTO'))
-      .toMatchObject({
+    expect(
+      service.historial().find((movimiento) => movimiento.tipo === 'REEMPLAZO_PUESTO'),
+    ).toMatchObject({
       tipo: 'REEMPLAZO_PUESTO',
       insumoId: 'ssd-1',
       puestoId: 'puesto-1',
       cantidad: 1,
     });
     expect(service.historial()[0]?.fecha).toBeInstanceOf(Date);
+    expect(service.historial().find((movimiento) => movimiento.tipo === 'REEMPLAZO_PUESTO')?.detalle)
+      .toContain('Motivo: Falla: disco ruidoso.');
     expect(service.componentesRetirados()).toHaveLength(1);
     expect(service.componentesRetirados()[0]).toMatchObject({
       puestoId: 'puesto-1',
@@ -84,7 +87,7 @@ describe('InventoryService', () => {
   it('does not change stock when there is no available item', () => {
     service.stock.set([{ ...stock[0]!, cantidadDisponible: 0 }]);
 
-    expect(() => service.reemplazarComponente('puesto-1', 'DISCO_HDD', 'ssd-1')).toThrow(
+    expect(() => service.reemplazarComponente('puesto-1', 'hdd-1', 'ssd-1', 'Falla')).toThrow(
       'No hay suficiente stock disponible',
     );
     expect(service.puestos()).toEqual(puestos);
@@ -100,6 +103,9 @@ describe('InventoryService', () => {
     });
 
     expect(equipo.codigoSeguimiento).toBe('');
+    expect(equipo.id).toMatch(
+      /^red-[^-]+-\d+-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
     expect(service.equiposRed()).toContainEqual(equipo);
 
     service.eliminarEquipoRed(equipo.id);
@@ -198,7 +204,7 @@ describe('InventoryService', () => {
   });
 
   it('changes the status of a removed component', () => {
-    service.reemplazarComponente('puesto-1', 'DISCO_HDD', 'ssd-1');
+    service.reemplazarComponente('puesto-1', 'hdd-1', 'ssd-1', 'Obsolescencia');
     const retirado = service.componentesRetirados()[0];
 
     expect(retirado).toBeDefined();

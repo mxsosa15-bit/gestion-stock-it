@@ -1,6 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import { v4 as uuidv4 } from 'uuid';
 import {
   Area,
   ComponentePuesto,
@@ -63,14 +64,15 @@ export class InventoryService {
     this.errorCarga.set('');
     this.errorServidor.set('');
     try {
-      const response = await firstValueFrom(
-        this.http.get<InventoryResponse>('/api/inventory'),
-      );
+      const response = await firstValueFrom(this.http.get<InventoryResponse>('/api/inventory'));
       this.revision = Number(response.revision);
       this.aplicarInventario(response.payload);
       this.persistedSnapshot = this.obtenerInventario();
     } catch (error: unknown) {
-      const message = this.obtenerMensajeError(error, 'No se pudo cargar el inventario del servidor.');
+      const message = this.obtenerMensajeError(
+        error,
+        'No se pudo cargar el inventario del servidor.',
+      );
       this.errorCarga.set(message);
       throw new Error(message);
     } finally {
@@ -205,7 +207,7 @@ export class InventoryService {
   }
 
   private generarId(prefijo: string): string {
-    return `${prefijo}-${Date.now().toString(36)}-${++this.idSequence}-${globalThis.crypto.randomUUID()}`;
+    return `${prefijo}-${Date.now().toString(36)}-${++this.idSequence}-${uuidv4()}`;
   }
 
   private normalizarComponente(componente: ComponentePuesto): ComponentePuesto {
@@ -266,7 +268,9 @@ export class InventoryService {
 
   eliminarArea(areaId: string): void {
     if (this.puestos().some((puesto) => puesto.areaId === areaId)) {
-      throw new Error('No se puede eliminar esta área porque tiene puestos de trabajo registrados.');
+      throw new Error(
+        'No se puede eliminar esta área porque tiene puestos de trabajo registrados.',
+      );
     }
     if (this.equiposRed().some((equipo) => equipo.areaId === areaId)) {
       throw new Error('No se puede eliminar esta área porque tiene equipos de red asignados.');
@@ -302,9 +306,7 @@ export class InventoryService {
     if (!equipo) {
       return;
     }
-    this.equiposRed.update((equipos) =>
-      equipos.filter((item) => item.id !== equipoRedId),
-    );
+    this.equiposRed.update((equipos) => equipos.filter((item) => item.id !== equipoRedId));
     this.registrarHistorial(
       'BAJA_EQUIPO_RED',
       `Se eliminó el ${equipo.tipo} ${equipo.marca} ${equipo.modelo} del área ${equipo.areaId}.`,
@@ -331,8 +333,7 @@ export class InventoryService {
           insumo.id === existente.id
             ? {
                 ...insumo,
-                cantidadDisponible:
-                  insumo.cantidadDisponible + nuevoItem.cantidadDisponible,
+                cantidadDisponible: insumo.cantidadDisponible + nuevoItem.cantidadDisponible,
               }
             : insumo,
         ),
@@ -390,9 +391,7 @@ export class InventoryService {
     });
     this.puestos.update((puestos) =>
       puestos.map((item) =>
-        item.id === puestoId
-          ? { ...item, componentes: [...item.componentes, componente] }
-          : item,
+        item.id === puestoId ? { ...item, componentes: [...item.componentes, componente] } : item,
       ),
     );
     this.registrarHistorial(
@@ -419,8 +418,9 @@ export class InventoryService {
 
   reemplazarComponente(
     puestoId: string,
-    tipoPeriferico: TipoPeriferico,
+    componenteActualId: string,
     insumoStockId: string,
+    motivo: string,
     estadoComponenteRetirado: EstadoComponenteRetirado = 'REPARACION',
   ): void {
     const puesto = this.puestos().find((item) => item.id === puestoId);
@@ -433,12 +433,14 @@ export class InventoryService {
       throw new Error('No hay suficiente stock disponible de este insumo.');
     }
     const componenteActual = puesto.componentes.find(
-      (componente) => componente.tipo === tipoPeriferico,
+      (componente) => componente.id === componenteActualId,
     );
     if (!componenteActual) {
-      throw new Error(
-        `El puesto "${puesto.nombrePuesto}" no tiene un componente de tipo "${tipoPeriferico}" para reemplazar.`,
-      );
+      throw new Error(`No se encontró el componente saliente en "${puesto.nombrePuesto}".`);
+    }
+    const motivoValidado = motivo.trim();
+    if (!motivoValidado || motivoValidado.length > 500) {
+      throw new Error('Ingresá un motivo de reemplazo de hasta 500 caracteres.');
     }
 
     const componenteNuevo = this.normalizarComponente({
@@ -470,9 +472,7 @@ export class InventoryService {
           ? {
               ...item,
               componentes: [
-                ...item.componentes.filter(
-                  (componente) => componente.id !== componenteActual.id,
-                ),
+                ...item.componentes.filter((componente) => componente.id !== componenteActual.id),
                 componenteNuevo,
               ],
             }
@@ -482,12 +482,12 @@ export class InventoryService {
     this.componentesRetirados.update((componentes) => [retirado, ...componentes]);
     this.registrarHistorial(
       'REEMPLAZO_PUESTO',
-      `Se instaló ${insumo.tipo} (${insumo.marca} - ${insumo.especificacion}) en ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado}).`,
+      `Se instaló ${insumo.tipo} (${insumo.marca} - ${insumo.especificacion}) en ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado}). Motivo: ${motivoValidado}.`,
       { insumoId: insumo.id, puestoId: puesto.id },
     );
     this.registrarHistorial(
       'RETIRO_COMPONENTE',
-      `Se retiró ${componenteActual.tipo} ${componenteActual.marca} ${componenteActual.especificacion} de ${puesto.nombrePuesto}; estado inicial: ${estadoComponenteRetirado}.`,
+      `Se retiró ${componenteActual.tipo} ${componenteActual.marca} ${componenteActual.especificacion} de ${puesto.nombrePuesto}; estado inicial: ${estadoComponenteRetirado}. Motivo: ${motivoValidado}.`,
       { puestoId: puesto.id, componenteRetiradoId: retirado.id },
     );
   }
@@ -496,9 +496,7 @@ export class InventoryService {
     componenteRetiradoId: string,
     nuevoEstado: EstadoComponenteRetirado,
   ): void {
-    const retirado = this.componentesRetirados().find(
-      (item) => item.id === componenteRetiradoId,
-    );
+    const retirado = this.componentesRetirados().find((item) => item.id === componenteRetiradoId);
     if (!retirado) {
       throw new Error(`No se encontró el componente retirado "${componenteRetiradoId}".`);
     }

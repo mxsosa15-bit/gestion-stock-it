@@ -6,13 +6,24 @@ import { firstValueFrom } from 'rxjs';
 export interface AuthenticatedUser {
   id: string;
   username: string;
-  role: 'admin' | 'operator';
+  role: SystemRole;
+  areaId: string | null;
+  areaNombre: string | null;
+}
+
+export type SystemRole = 'admin' | 'operator' | 'solicitante' | 'dashboard';
+
+export interface ManagedArea {
+  id: string;
+  nombre: string;
 }
 
 export interface ManagedUser {
   id: string;
   username: string;
-  role: 'admin' | 'operator';
+  role: SystemRole;
+  areaId: string | null;
+  areaNombre: string | null;
   createdAt: string;
 }
 
@@ -33,15 +44,14 @@ export class AuthService {
   readonly error = signal('');
   readonly pending = signal(false);
   readonly usuarios = signal<ManagedUser[]>([]);
+  readonly areas = signal<ManagedArea[]>([]);
 
   async initialize(): Promise<void> {
     if (!isPlatformBrowser(this.platformId)) {
       return;
     }
     try {
-      const response = await firstValueFrom(
-        this.http.get<SessionResponse>('/api/auth/session'),
-      );
+      const response = await firstValueFrom(this.http.get<SessionResponse>('/api/auth/session'));
       this.user.set(response.user);
       this.setupRequired.set(response.setupRequired);
       this.error.set('');
@@ -100,21 +110,42 @@ export class AuthService {
   }
 
   async cargarUsuarios(): Promise<void> {
-    const users = await firstValueFrom(
-      this.http.get<ManagedUser[]>('/api/admin/users'),
-    );
+    const users = await firstValueFrom(this.http.get<ManagedUser[]>('/api/admin/users'));
     this.usuarios.set(users);
+  }
+
+  async cargarAreas(): Promise<void> {
+    const areas = await firstValueFrom(this.http.get<ManagedArea[]>('/api/admin/areas'));
+    this.areas.set(areas);
   }
 
   async crearUsuario(
     username: string,
     password: string,
-    role: ManagedUser['role'],
+    role: SystemRole,
+    areaId: string | null,
   ): Promise<void> {
     await firstValueFrom(
-      this.http.post<ManagedUser>('/api/admin/users', { username, password, role }),
+      this.http.post<ManagedUser>('/api/admin/users', { username, password, role, areaId }),
     );
     await this.cargarUsuarios();
+  }
+
+  async restablecerContrasena(userId: string, password: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.put<{ message: string }>(
+          `/api/admin/users/${encodeURIComponent(userId)}/password`,
+          {
+            password,
+          },
+        ),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.getErrorMessage(error, 'No se pudo restablecer la contraseña del usuario.'),
+      );
+    }
   }
 
   private getErrorMessage(error: unknown, fallback: string): string {

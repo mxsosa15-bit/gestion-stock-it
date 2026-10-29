@@ -1,0 +1,440 @@
+<main class="tickets-page">
+  @if (isRequester()) {
+    <section class="tickets-heading">
+      <div>
+        <span class="eyebrow">MESA DE AYUDA</span>
+        <h2>Reclamos de mi área</h2>
+        <p>Seguí el estado y las novedades de las solicitudes de tu sector.</p>
+      </div>
+      <span class="area-chip"
+        >{{ authService.user()?.username }} ·
+        {{ authService.user()?.areaNombre ?? 'Área sin asignar' }}</span
+      >
+    </section>
+
+    <form class="ticket-form" (ngSubmit)="crearReclamo()">
+      <h3>Nuevo reclamo</h3>
+      <label>
+        <span>Asunto</span>
+        <input
+          name="titulo"
+          required
+          maxlength="200"
+          placeholder="Ej. No funciona la impresora"
+          [ngModel]="titulo()"
+          (ngModelChange)="titulo.set($event)"
+        />
+      </label>
+      <label>
+        <span>Categoría</span>
+        <select
+          name="categoria"
+          required
+          [ngModel]="categoria()"
+          (ngModelChange)="categoria.set($event)"
+        >
+          @for (item of categorias; track item) {
+            <option [value]="item">{{ item }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Detalle obligatorio del problema</span>
+        <textarea
+          name="descripcion"
+          required
+          maxlength="10000"
+          rows="5"
+          placeholder="Indicá qué ocurre, desde cuándo y cómo afecta tu trabajo."
+          [ngModel]="descripcion()"
+          (ngModelChange)="descripcion.set($event)"
+        ></textarea>
+      </label>
+      <button class="primary-action" type="submit" [disabled]="sending()">
+        {{ sending() ? 'Enviando…' : 'Enviar reclamo' }}
+      </button>
+    </form>
+
+    <section class="requester-tickets" aria-label="Seguimiento de mis reclamos">
+      <h3>Seguimiento</h3>
+      @if (loading()) {
+        <p class="feedback" role="status">Cargando tus reclamos…</p>
+      } @else if (tickets().length === 0) {
+        <p class="feedback">Todavía no enviaste reclamos.</p>
+      } @else {
+        <div class="ticket-list">
+          @for (ticket of tickets(); track ticket.id) {
+            <article class="ticket-card">
+              <header>
+                <div>
+                  <span class="ticket-category">{{ ticket.categoria }}</span>
+                  <h3>{{ ticket.titulo }}</h3>
+                </div>
+                <time>{{ ticket.fecha_creacion | date: 'dd/MM/yyyy HH:mm' }}</time>
+              </header>
+              <p class="ticket-description">{{ ticket.descripcion }}</p>
+              <ol class="status-steps" [attr.aria-label]="'Estado actual: ' + ticket.estado">
+                @for (estado of estados; track estado; let index = $index) {
+                  <li
+                    [class.current]="indiceEstado(ticket.estado) === index"
+                    [class.passed]="indiceEstado(ticket.estado) > index"
+                  >
+                    <span>{{ index + 1 }}</span>
+                    {{ estado }}
+                  </li>
+                }
+              </ol>
+              <p class="ticket-status-line">
+                Estado actual:
+                <span
+                  class="ticket-state"
+                  [class]="ticket.estado.toLowerCase().replace(' ', '-')"
+                  >{{ ticket.estado }}</span
+                >
+              </p>
+              @if (ticket.solucion) {
+                <p class="resolution"><strong>Resolución:</strong> {{ ticket.solucion }}</p>
+              }
+              @if (ticket.taller; as transfer) {
+                <section class="workshop-panel" aria-label="Derivación a taller">
+                  <h4>Equipo propuesto para taller</h4>
+                  <dl>
+                    <dt>Equipo</dt>
+                    <dd>{{ transfer.equipo }}</dd>
+                    <dt>Serie o patrimonio</dt>
+                    <dd>{{ transfer.identificacion }}</dd>
+                    <dt>Motivo</dt>
+                    <dd>{{ transfer.detalle }}</dd>
+                  </dl>
+                  <p>
+                    Solicitud {{ transfer.estado.toLowerCase() }} ·
+                    {{ transfer.solicitado_por_nombre }} ·
+                    {{ transfer.solicitado_at | date: 'dd/MM/yyyy HH:mm' }}
+                  </p>
+                  @if (transfer.estado === 'Pendiente') {
+                    <form class="approval-form" (ngSubmit)="aprobarDerivacion(ticket)">
+                      <label class="verification-check">
+                        <input
+                          type="checkbox"
+                          required
+                          [checked]="workshopVerified()[transfer.id] || false"
+                          (change)="marcarEquipoVerificado(transfer.id, $event)"
+                        />
+                        <span>
+                          Verifiqué que este es el equipo exacto retirado de mi área y autorizo su
+                          envío al taller. La aprobación se registra con mi cuenta.
+                        </span>
+                      </label>
+                      <div class="ticket-actions">
+                        <button
+                          type="submit"
+                          class="primary-action"
+                          [disabled]="
+                            busyTicketId() === ticket.id || !workshopVerified()[transfer.id]
+                          "
+                        >
+                          Aprobar equipo y traslado
+                        </button>
+                        @if (workshopDecisionId() !== transfer.id) {
+                          <button
+                            type="button"
+                            class="secondary-action"
+                            (click)="abrirRechazo(transfer.id)"
+                          >
+                            No reconozco el equipo
+                          </button>
+                        }
+                      </div>
+                    </form>
+                    @if (workshopDecisionId() === transfer.id) {
+                      <form class="resolution-form" (ngSubmit)="rechazarDerivacion(ticket)">
+                        <label>
+                          <span>Motivo del rechazo</span>
+                          <textarea
+                            required
+                            maxlength="2000"
+                            name="motivoRechazo"
+                            rows="3"
+                            [ngModel]="workshopReason()"
+                            (ngModelChange)="workshopReason.set($event)"
+                          ></textarea>
+                        </label>
+                        <button
+                          type="submit"
+                          class="danger-action"
+                          [disabled]="busyTicketId() === ticket.id"
+                        >
+                          Registrar rechazo
+                        </button>
+                        <button
+                          type="button"
+                          class="text-action"
+                          (click)="workshopDecisionId.set(null)"
+                        >
+                          Cancelar
+                        </button>
+                      </form>
+                    }
+                  } @else if (transfer.estado === 'Aprobado') {
+                    <p class="feedback feedback-success">
+                      Aprobado por {{ transfer.aprobado_por_nombre }} ·
+                      {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
+                    </p>
+                  } @else {
+                    <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
+                  }
+                </section>
+              }
+            </article>
+          }
+        </div>
+      }
+    </section>
+  } @else {
+    <section class="tickets-heading">
+      <div>
+        <span class="eyebrow">SOPORTE IT</span>
+        <h2>Recepción de reclamos</h2>
+        <p>Cola general de trabajo con solicitudes de todas las áreas.</p>
+      </div>
+      <div class="heading-actions">
+        <span class="ticket-count">{{ activeTickets().length }} activos</span>
+        <span class="live-indicator" [class.connected]="liveConnected()" role="status">
+          <span></span>{{ liveConnected() ? 'En vivo' : 'Reconectando…' }}
+        </span>
+      </div>
+    </section>
+
+    <section class="filters-panel" aria-label="Filtros y reportes">
+      <div class="filters-heading">
+        <div>
+          <h3>Filtros y reportes</h3>
+          <p>{{ filteredTickets().length }} reclamos coinciden con los filtros.</p>
+        </div>
+        <button type="button" class="secondary-action" (click)="exportarReporte()">
+          Descargar reporte CSV
+        </button>
+      </div>
+      <div class="filters-grid">
+        <label>
+          <span>Estado</span>
+          <select [ngModel]="filtroEstado()" (ngModelChange)="filtroEstado.set($event)">
+            <option value="Todos">Todos los estados</option>
+            @for (estado of estados; track estado) {
+              <option [value]="estado">{{ estado }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Categoría</span>
+          <select [ngModel]="filtroCategoria()" (ngModelChange)="filtroCategoria.set($event)">
+            <option value="Todas">Todas las categorías</option>
+            @for (categoria of categorias; track categoria) {
+              <option [value]="categoria">{{ categoria }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Desde</span>
+          <input type="date" [ngModel]="fechaDesde()" (ngModelChange)="fechaDesde.set($event)" />
+        </label>
+        <label>
+          <span>Hasta</span>
+          <input type="date" [ngModel]="fechaHasta()" (ngModelChange)="fechaHasta.set($event)" />
+        </label>
+      </div>
+    </section>
+
+    @if (loading()) {
+      <p class="feedback" role="status">Cargando reclamos…</p>
+    } @else if (activeTickets().length === 0) {
+      <p class="feedback">No hay reclamos activos para los filtros seleccionados.</p>
+    } @else {
+      <section class="ticket-list" aria-label="Reclamos activos">
+        @for (ticket of activeTickets(); track ticket.id) {
+          <article class="ticket-card">
+            <header>
+              <div>
+                <div class="ticket-badges">
+                  <span class="ticket-state" [class.in-progress]="ticket.estado === 'En proceso'">
+                    {{ ticket.estado }}
+                  </span>
+                  <span class="ticket-category">{{ ticket.categoria }}</span>
+                </div>
+                <h3>{{ ticket.titulo }}</h3>
+              </div>
+              <time>{{ ticket.fecha_creacion | date: 'dd/MM/yyyy HH:mm' }}</time>
+            </header>
+            <p class="ticket-description">{{ ticket.descripcion }}</p>
+            <p class="ticket-owner">
+              Solicitante: <strong>{{ ticket.usuario_nombre }}</strong> · Área:
+              <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong>
+            </p>
+
+            @if (ticket.taller; as transfer) {
+              <section class="workshop-panel" aria-label="Derivación a taller">
+                <h4>Derivación a taller · {{ transfer.estado }}</h4>
+                <p>
+                  {{ transfer.equipo }} · {{ transfer.identificacion }} · {{ transfer.detalle }}
+                </p>
+                @if (transfer.estado === 'Pendiente') {
+                  <p class="feedback">Esperando la aprobación autenticada del solicitante.</p>
+                } @else if (transfer.estado === 'Aprobado') {
+                  <p class="feedback feedback-success">
+                    Aprobado por {{ transfer.aprobado_por_nombre }} ·
+                    {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
+                  </p>
+                } @else {
+                  <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
+                }
+              </section>
+            }
+
+            <div class="ticket-actions">
+              @if (ticket.estado === 'Abierto') {
+                <button
+                  type="button"
+                  class="secondary-action"
+                  [disabled]="busyTicketId() === ticket.id"
+                  (click)="ponerEnProceso(ticket)"
+                >
+                  {{ busyTicketId() === ticket.id ? 'Actualizando…' : 'Tomar reclamo' }}
+                </button>
+              } @else {
+                @if (resolvingTicketId() === ticket.id) {
+                  <form class="resolution-form" (ngSubmit)="terminar(ticket)">
+                    <label>
+                      <span>Solución o trabajo realizado</span>
+                      <textarea
+                        required
+                        maxlength="10000"
+                        rows="3"
+                        [value]="drafts()[ticket.id] || ''"
+                        (input)="actualizarSolucionDesdeEvento(ticket.id, $event)"
+                      ></textarea>
+                    </label>
+                    <button
+                      type="submit"
+                      class="primary-action"
+                      [disabled]="busyTicketId() === ticket.id"
+                    >
+                      {{ busyTicketId() === ticket.id ? 'Guardando…' : 'Confirmar terminado' }}
+                    </button>
+                    <button type="button" class="text-action" (click)="resolvingTicketId.set(null)">
+                      Cancelar
+                    </button>
+                  </form>
+                } @else {
+                  <button type="button" class="primary-action" (click)="abrirResolucion(ticket)">
+                    Terminar reclamo
+                  </button>
+                }
+              }
+              @if (ticket.taller?.estado !== 'Pendiente') {
+                @if (workshopTicketId() === ticket.id) {
+                  <form class="resolution-form workshop-form" (ngSubmit)="enviarAlTaller(ticket)">
+                    <h4>Identificar el equipo que se deriva</h4>
+                    <label>
+                      <span>Equipo</span>
+                      <input
+                        required
+                        maxlength="200"
+                        name="equipo"
+                        placeholder="Ej. Monitor Dell P2419H"
+                        [ngModel]="workshopDrafts()[ticket.id]?.equipo || ''"
+                        (ngModelChange)="actualizarDerivacion(ticket.id, 'equipo', $event)"
+                      />
+                    </label>
+                    <label>
+                      <span>Número de serie o patrimonio</span>
+                      <input
+                        required
+                        maxlength="200"
+                        name="identificacion"
+                        placeholder="Identificador que el solicitante pueda verificar"
+                        [ngModel]="workshopDrafts()[ticket.id]?.identificacion || ''"
+                        (ngModelChange)="actualizarDerivacion(ticket.id, 'identificacion', $event)"
+                      />
+                    </label>
+                    <label>
+                      <span>Motivo y detalle del traslado</span>
+                      <textarea
+                        required
+                        maxlength="2000"
+                        name="detalle"
+                        rows="2"
+                        [ngModel]="workshopDrafts()[ticket.id]?.detalle || ''"
+                        (ngModelChange)="actualizarDerivacion(ticket.id, 'detalle', $event)"
+                      ></textarea>
+                    </label>
+                    <button
+                      type="submit"
+                      class="primary-action"
+                      [disabled]="busyTicketId() === ticket.id"
+                    >
+                      Solicitar aprobación para taller
+                    </button>
+                    <button type="button" class="text-action" (click)="workshopTicketId.set(null)">
+                      Cancelar
+                    </button>
+                  </form>
+                } @else {
+                  <button type="button" class="secondary-action" (click)="abrirDerivacion(ticket)">
+                    Mandar equipo al taller
+                  </button>
+                }
+              }
+            </div>
+          </article>
+        }
+      </section>
+    }
+
+    <section class="completed-section">
+      <button
+        type="button"
+        class="completed-toggle"
+        [attr.aria-expanded]="completedVisible()"
+        (click)="completedVisible.update((visible) => !visible)"
+      >
+        {{ completedVisible() ? 'Ocultar' : 'Ver' }} reclamos terminados ({{
+          completedTickets().length
+        }})
+      </button>
+      @if (completedVisible()) {
+        @if (completedTickets().length === 0) {
+          <p class="feedback">No hay reclamos terminados para los filtros seleccionados.</p>
+        } @else {
+          <div class="ticket-list">
+            @for (ticket of completedTickets(); track ticket.id) {
+              <article class="ticket-card completed-card">
+                <header>
+                  <div>
+                    <div class="ticket-badges">
+                      <span class="ticket-state completed">Terminado</span>
+                      <span class="ticket-category">{{ ticket.categoria }}</span>
+                    </div>
+                    <h3>{{ ticket.titulo }}</h3>
+                  </div>
+                  <time>{{ ticket.fecha_creacion | date: 'dd/MM/yyyy HH:mm' }}</time>
+                </header>
+                <p class="ticket-description">{{ ticket.descripcion }}</p>
+                <p class="ticket-owner">
+                  {{ ticket.usuario_nombre }} · {{ ticket.area_nombre ?? 'Sin área' }}
+                </p>
+                <p class="resolution"><strong>Solución:</strong> {{ ticket.solucion }}</p>
+              </article>
+            }
+          </div>
+        }
+      }
+    </section>
+  }
+
+  @if (error()) {
+    <p class="feedback feedback-error" role="alert">{{ error() }}</p>
+  }
+  @if (notice()) {
+    <p class="toast-notice" role="status" aria-live="polite">{{ notice() }}</p>
+  }
+</main>

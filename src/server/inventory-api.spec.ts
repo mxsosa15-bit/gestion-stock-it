@@ -1,4 +1,4 @@
-import { normalizeSnapshot, type InventorySnapshot } from './inventory-api';
+import { normalizeSnapshot, parsePasswordReset, type InventorySnapshot } from './inventory-api';
 
 describe('normalizeSnapshot', () => {
   it('generates unique tracking codes on the server only for trackable inventory', () => {
@@ -39,5 +39,18 @@ describe('normalizeSnapshot', () => {
     expect(new Set(codes).size).toBe(codes.length);
     expect(ram).not.toHaveProperty('codigoSeguimiento');
     expect(result.stock[1]).not.toHaveProperty('codigoSeguimiento');
+  });
+});
+
+describe('parsePasswordReset', () => {
+  it('accepts a password that meets the minimum length', () => {
+    expect(parsePasswordReset({ password: 'a-secure-password' })).toBe('a-secure-password');
+  });
+
+  it('rejects missing, short, or non-string passwords', () => {
+    expect(parsePasswordReset(null)).toBeNull();
+    expect(parsePasswordReset({})).toBeNull();
+    expect(parsePasswordReset({ password: 'short' })).toBeNull();
+    expect(parsePasswordReset({ password: 123456789012 })).toBeNull();
   });
 });

@@ -1,0 +1,268 @@
+.explorer-panel,
+.explorer-heading,
+.explorer-filters,
+.area-overview,
+.asset-groups,
+.asset-group,
+.area-ticket-history {
+  display: grid;
+  gap: 14px;
+}
+
+.explorer-panel {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #dfe4ee;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 20px #202a3a0a;
+}
+
+.explorer-heading,
+.asset-group > header,
+.area-ticket-history > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.explorer-heading > div {
+  display: grid;
+  gap: 5px;
+}
+
+.eyebrow {
+  color: #4658bd;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+.explorer-heading h3,
+.area-overview > h4,
+.asset-group h4,
+.area-ticket-history h4 {
+  color: #292d3d;
+  font-size: 15px;
+}
+
+.explorer-heading p,
+.area-ticket-history header p {
+  color: #687087;
+  font-size: 12px;
+}
+
+.asset-count,
+.area-ticket-history > header > span,
+.asset-group > header > span {
+  padding: 5px 9px;
+  border-radius: 14px;
+  color: #34406b;
+  background: #e8ecfa;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.explorer-filters {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.explorer-filters label {
+  display: grid;
+  gap: 6px;
+  color: #536078;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.explorer-filters select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d7dce5;
+  border-radius: 5px;
+  color: #292d3d;
+  background: #fff;
+  font: inherit;
+}
+
+.explorer-filters select:disabled {
+  background: #f0f1f5;
+}
+
+.asset-groups {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.asset-group {
+  align-content: start;
+  padding: 14px;
+  border: 1px solid #e6e9f0;
+  border-radius: 7px;
+  background: #fafbfe;
+}
+
+.asset-group > header,
+.area-ticket-history > header {
+  align-items: center;
+}
+
+.asset-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #e6e9f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.asset-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.asset-card strong {
+  color: #292d3d;
+  font-size: 12px;
+}
+
+.asset-card small,
+.asset-empty {
+  color: #687087;
+  font-size: 11px;
+}
+
+.asset-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.asset-card li {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  color: #536078;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.asset-card li span:first-child {
+  color: #34406b;
+  font-weight: 700;
+}
+
+.tracking-code {
+  overflow-wrap: anywhere;
+}
+
+.area-ticket-history {
+  padding-top: 15px;
+  border-top: 1px solid #e6e9f0;
+}
+
+.area-ticket-history > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.ticket-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ticket-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  padding: 12px;
+  border: 1px solid #e6e9f0;
+  border-radius: 6px;
+}
+
+.ticket-history-item > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 9px;
+}
+
+.ticket-history-item strong {
+  color: #292d3d;
+  font-size: 12px;
+}
+
+.ticket-history-item small,
+.ticket-history-item p,
+.ticket-history-item time {
+  color: #687087;
+  font-size: 11px;
+}
+
+.ticket-history-item p {
+  grid-column: 1 / -1;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.ticket-status {
+  justify-self: start;
+  padding: 3px 6px;
+  border-radius: 3px;
+  color: #70520b;
+  background: #ffedb5;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ticket-status.en-proceso {
+  color: #34406b;
+  background: #e8ecfa;
+}
+
+.ticket-status.terminado {
+  color: #17684d;
+  background: #eaf8f1;
+}
+
+.explorer-feedback {
+  padding: 10px;
+  border-radius: 5px;
+  color: #687087;
+  background: #f4f6fa;
+  font-size: 12px;
+}
+
+.explorer-error {
+  color: #922e2b;
+  background: #fff1ef;
+}
+
+@media (max-width: 720px) {
+  .explorer-panel {
+    padding: 14px;
+  }
+
+  .asset-groups,
+  .explorer-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .ticket-history-item {
+    grid-template-columns: 1fr;
+  }
+}

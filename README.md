@@ -58,7 +58,15 @@ npm run db:migrate
 npm start
 ```
 
-La interfaz estará disponible en `http://localhost:4200`; `/api` se redirige a la API local. La migración es idempotente. La primera persona que abra la aplicación configura la cuenta administradora inicial; luego esa cuenta puede crear cuentas locales desde **Reportes**.
+La interfaz estará disponible en `http://localhost:4200`; `/api` se redirige a la API local. Las migraciones numeradas son aditivas y se aplican en orden. La primera persona que abra la aplicación configura la cuenta administradora inicial; luego esa cuenta puede crear cuentas locales desde **Reportes** con perfiles de administración, operación, solicitante (asignado a un área) o dashboard de solo lectura.
+
+El comando `npm run db:migrate` aplica en orden los archivos SQL numerados de `database/migrations`. Los reclamos se generan desde cuentas solicitantes, requieren categoría y detalle, y permiten seguir su estado. El panel del equipo operador recibe cambios en vivo, ofrece filtros por estado, categoría y fecha, y exporta los resultados a CSV. Para derivar un equipo al taller, el operador registra su identificación; el titular del reclamo debe iniciar sesión, verificar el equipo y aprobar o rechazar la derivación. La decisión queda asociada a su cuenta y a la fecha del servidor. Aplicá la migración `004-ticket-categories-and-workshop.sql` para habilitar estas funciones. El perfil dashboard consulta stock y parque sin permisos de escritura.
+
+Las notificaciones de tickets usan Server-Sent Events autenticados; en despliegues con varias instancias de API se necesita un mecanismo compartido de publicación de eventos entre instancias. Los IDs creados por la interfaz usan UUID v4 de `uuid`, compatible con navegadores donde `crypto.randomUUID()` no está disponible.
+
+Las cuentas solicitantes solo consultan reclamos de su propia área; las cuentas de operación y administración conservan la cola global. En **Pisos y áreas**, el explorador permite consultar los puestos, componentes, equipos de red y reclamos asociados a cada área. Los reemplazos del parque muestran el equipo saliente y el entrante, registran un motivo obligatorio y requieren confirmar el movimiento antes de actualizar el stock.
+
+La pantalla **Etiquetas de patrimonio** registra cada unidad física por número de serie, permite cargar equipos manualmente o mediante CSV (`numero_serie` requerido; `tipo`, `marca`, `modelo`, `especificacion` y `numero_patrimonio` opcionales), asociar posteriormente el número de la etiqueta recibida y generar códigos CODE128 para impresión. Aplicá las migraciones antes de usar estos módulos.
 
 Para una base de prueba, la aplicación comienza con inventario vacío. Los datos de `localStorage` de instalaciones anteriores no se importan automáticamente. La restauración desde JSON está limitada a administradores y solo funciona mientras el inventario del servidor esté vacío.
 

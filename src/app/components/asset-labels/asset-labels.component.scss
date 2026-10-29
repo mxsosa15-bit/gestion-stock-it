@@ -1,0 +1,268 @@
+:host {
+  display: block;
+}
+
+.asset-labels-page {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.labels-heading,
+.inventory-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.labels-heading h2 {
+  margin: 5px 0;
+  color: #292d3d;
+  font-size: 22px;
+}
+
+.labels-heading p,
+.inventory-heading p,
+.import-card > p {
+  margin: 0;
+  color: #687087;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.eyebrow,
+.asset-type {
+  color: #4658bd;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.entry-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #d7dce5;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.entry-card h3,
+.inventory-heading h3 {
+  margin: 0;
+  color: #292d3d;
+  font-size: 15px;
+}
+
+.entry-card label,
+.patrimony-input,
+.filter-field {
+  display: grid;
+  gap: 5px;
+  color: #536078;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.entry-card input,
+.entry-card select,
+.patrimony-input input,
+.filter-field input {
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #d7dce5;
+  border-radius: 4px;
+  color: #292d3d;
+  background: #fff;
+  font: inherit;
+}
+
+.entry-card input[type='file'] {
+  padding: 6px;
+}
+
+.print-action,
+.secondary-action {
+  min-height: 36px;
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  background: #394ba9;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-action {
+  color: #34406b;
+  background: #e8ecfa;
+}
+
+.print-action:disabled,
+.secondary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.inventory-heading {
+  align-items: end;
+}
+
+.filter-field {
+  min-width: min(100%, 280px);
+}
+
+.assets-list {
+  display: grid;
+  gap: 8px;
+}
+
+.asset-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(170px, 240px) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #d7dce5;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.asset-info {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.asset-info small {
+  color: #687087;
+  overflow-wrap: anywhere;
+}
+
+.patrimony-input input {
+  width: 100%;
+}
+
+.select-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #536078;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.select-label input {
+  width: 16px;
+  height: 16px;
+}
+
+.feedback,
+.empty-message {
+  margin: 0;
+  padding: 12px;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.feedback-error {
+  color: #922e2b;
+  background: #fff1ef;
+}
+
+.feedback-success {
+  color: #17684d;
+  background: #eaf8f1;
+}
+
+.empty-message {
+  color: #687087;
+  text-align: center;
+}
+
+.patrimony-print-sheet {
+  display: none;
+}
+
+.patrimony-label-card {
+  display: grid;
+  width: 46mm;
+  height: 26mm;
+  align-content: space-between;
+  gap: 1mm;
+  padding: 1mm;
+  overflow: hidden;
+  color: #111827;
+  background: #fff;
+  font-family: Arial, sans-serif;
+}
+
+.patrimony-label-card > span {
+  overflow: hidden;
+  font-size: 6pt;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patrimony-label-card strong {
+  overflow: hidden;
+  font-size: 7pt;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patrimony-label-card svg {
+  width: 100%;
+  height: 10mm;
+}
+
+.patrimony-label-card code {
+  font-size: 7pt;
+  font-weight: 700;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .asset-labels-page {
+    padding: 14px;
+  }
+
+  .labels-heading,
+  .inventory-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .entry-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .asset-info,
+  .patrimony-input {
+    grid-column: 1 / -1;
+  }
+}
+
+@media print {
+  .asset-labels-page {
+    display: none !important;
+  }
+
+  .patrimony-print-sheet {
+    display: block !important;
+  }
+}

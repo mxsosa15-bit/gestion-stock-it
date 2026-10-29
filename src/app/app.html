@@ -1,637 +1,1603 @@
 <ng-container *ngIf="authService.user()">
-<div *ngIf="!inventoryService.cargando() && !inventoryService.errorCarga()" class="app-shell">
-  <button
-    *ngIf="menuMovilAbierto()"
-    type="button"
-    class="mobile-menu-backdrop"
-    aria-label="Cerrar menú de navegación"
-    (click)="menuMovilAbierto.set(false)"
-  ></button>
+  <app-read-only-dashboard
+    *ngIf="
+      authService.user()?.role === 'dashboard' &&
+      !inventoryService.cargando() &&
+      !inventoryService.errorCarga()
+    "
+  ></app-read-only-dashboard>
+  <div
+    *ngIf="
+      authService.user()?.role !== 'dashboard' &&
+      !inventoryService.cargando() &&
+      !inventoryService.errorCarga()
+    "
+    class="app-shell"
+  >
+    <button
+      *ngIf="menuMovilAbierto()"
+      type="button"
+      class="mobile-menu-backdrop"
+      aria-label="Cerrar menú de navegación"
+      (click)="menuMovilAbierto.set(false)"
+    ></button>
 
-  <aside class="sidebar" [class.mobile-open]="menuMovilAbierto()">
-    <a class="brand" href="#" aria-label="DOSEP - Gestión de Parque IT" (click)="$event.preventDefault(); cambiarVista('PARQUE')">
-      <span class="brand-logo">
-        <img ngSrc="/logos/dosep.png" width="1024" height="235" sizes="(min-width: 720px) 20vw, 80vw" alt="DOSEP" priority>
-      </span>
-    </a>
+    <aside class="sidebar" [class.mobile-open]="menuMovilAbierto()">
+      <a
+        class="brand"
+        href="#"
+        aria-label="DOSEP - Gestión de Parque IT"
+        (click)="
+          $event.preventDefault();
+          cambiarVista(authService.user()?.role === 'solicitante' ? 'TICKETS' : 'PARQUE')
+        "
+      >
+        <span class="brand-logo">
+          <img
+            ngSrc="/logos/dosep.png"
+            width="1024"
+            height="235"
+            sizes="(min-width: 720px) 20vw, 80vw"
+            alt="DOSEP"
+            priority
+          />
+        </span>
+      </a>
 
-    <div class="sidebar-user">
-      <span class="sidebar-user-icon" aria-hidden="true">♟</span>
-      <span>{{ authService.user()?.username }}</span>
-    </div>
-
-    <span class="sidebar-caption">MENÚ PRINCIPAL</span>
-    <nav class="sidebar-nav" aria-label="Navegación principal">
-      <button type="button" (click)="cambiarVista('PARQUE')" [class.active]="vistaActiva() === 'PARQUE'">
-        <span class="nav-icon">▦</span><span>Parque informático</span>
-        <span class="nav-count">{{ puestos().length }}</span>
-      </button>
-      <button type="button" (click)="cambiarVista('STOCK')" [class.active]="vistaActiva() === 'STOCK'">
-        <span class="nav-icon">▣</span><span>Depósito y stock</span>
-        <span class="nav-count">{{ stock().length }}</span>
-      </button>
-      <button type="button" (click)="cambiarVista('EDIFICIO')" [class.active]="vistaActiva() === 'EDIFICIO'">
-        <span class="nav-icon">⌂</span><span>Pisos y áreas</span>
-      </button>
-      <button type="button" (click)="cambiarVista('REDES')" [class.active]="vistaActiva() === 'REDES'">
-        <span class="nav-icon">⌁</span><span>Equipos de red</span>
-        <span class="nav-count">{{ equiposRed().length }}</span>
-      </button>
-      <button type="button" (click)="cambiarVista('TALLER')" [class.active]="vistaActiva() === 'TALLER'">
-        <span class="nav-icon">⚒</span><span>Taller y scrap</span>
-        <span class="nav-count">{{ componentesRetirados().length }}</span>
-      </button>
-      <button type="button" (click)="cambiarVista('REPORTES')" [class.active]="vistaActiva() === 'REPORTES'">
-        <span class="nav-icon">▤</span><span>Reportes</span>
-      </button>
-    </nav>
-
-    <div class="sidebar-footer">
-      <span class="status-dot"></span>
-      <span><strong>Sistema operativo</strong><small>Inventario actualizado</small></span>
-      <button type="button" class="sidebar-logout" (click)="cerrarSesion()">
-        <span aria-hidden="true">↪</span> Cerrar sesión
-      </button>
-    </div>
-  </aside>
-
-  <div class="main-shell">
-    <header class="topbar">
-      <div class="topbar-title">
-        <button
-          type="button"
-          class="menu-toggle"
-          [attr.aria-expanded]="menuMovilAbierto()"
-          aria-label="Abrir menú de navegación"
-          (click)="alternarMenuMovil()"
-        >
-          <span></span><span></span><span></span>
-        </button>
-        <h1>DOSEP DIGITAL</h1>
+      <div class="sidebar-user">
+        <span class="sidebar-user-icon" aria-hidden="true">♟</span>
+        <span>{{ authService.user()?.username }}</span>
       </div>
-    </header>
 
-    <div class="page-content">
-      <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
-        <section class="page-heading">
-          <div>
-            <span class="eyebrow">OPERACIONES</span>
-            <h2>Parque informático</h2>
-            <p>Encontrá un puesto y consultá su equipamiento en segundos.</p>
-          </div>
-          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PUESTO')">
-            <span aria-hidden="true">＋</span> Nuevo puesto
+      <span class="sidebar-caption">MENÚ PRINCIPAL</span>
+      <nav class="sidebar-nav" aria-label="Navegación principal">
+        <button
+          *ngIf="
+            authService.user()?.role === 'solicitante' ||
+            authService.user()?.role === 'admin' ||
+            authService.user()?.role === 'operator'
+          "
+          type="button"
+          (click)="cambiarVista('TICKETS')"
+          [class.active]="vistaActiva() === 'TICKETS'"
+        >
+          <span class="nav-icon">✉</span
+          ><span>{{
+            authService.user()?.role === 'solicitante' ? 'Generar reclamo' : 'Reclamos activos'
+          }}</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('PARQUE')"
+          [class.active]="vistaActiva() === 'PARQUE'"
+        >
+          <span class="nav-icon">▦</span><span>Parque informático</span>
+          <span class="nav-count">{{ puestos().length }}</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('STOCK')"
+          [class.active]="vistaActiva() === 'STOCK'"
+        >
+          <span class="nav-icon">▣</span><span>Depósito y stock</span>
+          <span class="nav-count">{{ stock().length }}</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('EDIFICIO')"
+          [class.active]="vistaActiva() === 'EDIFICIO'"
+        >
+          <span class="nav-icon">⌂</span><span>Pisos y áreas</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('REDES')"
+          [class.active]="vistaActiva() === 'REDES'"
+        >
+          <span class="nav-icon">⌁</span><span>Equipos de red</span>
+          <span class="nav-count">{{ equiposRed().length }}</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('TALLER')"
+          [class.active]="vistaActiva() === 'TALLER'"
+        >
+          <span class="nav-icon">⚒</span><span>Taller y scrap</span>
+          <span class="nav-count">{{ componentesRetirados().length }}</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role !== 'solicitante'"
+          type="button"
+          (click)="cambiarVista('REPORTES')"
+          [class.active]="vistaActiva() === 'REPORTES'"
+        >
+          <span class="nav-icon">▤</span><span>Reportes</span>
+        </button>
+        <button
+          *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+          type="button"
+          (click)="cambiarVista('PATRIMONIO')"
+          [class.active]="vistaActiva() === 'PATRIMONIO'"
+        >
+          <span class="nav-icon">▧</span><span>Etiquetas de patrimonio</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span><strong>Sistema operativo</strong><small>Inventario actualizado</small></span>
+        <button type="button" class="sidebar-logout" (click)="cerrarSesion()">
+          <span aria-hidden="true">↪</span> Cerrar sesión
+        </button>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="topbar-title">
+          <button
+            type="button"
+            class="menu-toggle"
+            [attr.aria-expanded]="menuMovilAbierto()"
+            aria-label="Abrir menú de navegación"
+            (click)="alternarMenuMovil()"
+          >
+            <span></span><span></span><span></span>
           </button>
-        </section>
+          <h1>DOSEP DIGITAL</h1>
+        </div>
+      </header>
 
-        <section class="stats-grid" aria-label="Resumen del inventario">
-          <article class="stat-card">
-            <span class="stat-icon icon-indigo">▦</span>
-            <div><span>Puestos registrados</span><strong>{{ puestos().length }}</strong></div>
-          </article>
-          <article class="stat-card">
-            <span class="stat-icon icon-blue">⌂</span>
-            <div><span>Áreas activas</span><strong>{{ areas().length }}</strong></div>
-          </article>
-          <article class="stat-card">
-            <span class="stat-icon icon-amber">▣</span>
-            <div><span>Alertas de stock</span><strong>{{ componentesStockBajo() }}</strong></div>
-          </article>
-          <article class="stat-card">
-            <span class="stat-icon icon-green">⌁</span>
-            <div><span>Equipos de red</span><strong>{{ equiposRed().length }}</strong></div>
-          </article>
-        </section>
-
-        <section class="filter-panel">
-          <div class="filter-title">BUSCADOR</div>
-          <label class="search-control">
-            <span class="control-label">Buscar puesto</span>
-            <span class="input-with-icon">
-              <span aria-hidden="true">⌕</span>
-              <input
-                type="search"
-                [ngModel]="busquedaParque()"
-                (ngModelChange)="busquedaParque.set($event)"
-                placeholder="Usuario, marca o número de serie"
-              />
-            </span>
-          </label>
-          <label>
-            <span class="control-label">Piso</span>
-            <select [ngModel]="pisoSeleccionadoId()" (ngModelChange)="pisoSeleccionadoId.set($event); areaSeleccionadaId.set('TODAS')">
-              <option value="TODOS">Todos los pisos</option>
-              <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
-            </select>
-          </label>
-          <label>
-            <span class="control-label">Área</span>
-            <select [ngModel]="areaSeleccionadaId()" (ngModelChange)="areaSeleccionadaId.set($event)">
-              <option value="TODAS">Todas las áreas</option>
-              <option *ngFor="let area of areasFiltradas()" [value]="area.id">{{ area.nombre }}</option>
-            </select>
-          </label>
-          <span class="results-count">{{ puestosFiltrados().length }} resultados</span>
-        </section>
-
-        <section class="section-heading">
-          <div><h3>Puestos de trabajo</h3><p>Seleccioná una ficha para consultar el detalle o imprimir sus etiquetas.</p></div>
-          <div class="view-switch" role="group" aria-label="Vista de puestos de trabajo">
-            <button
-              type="button"
-              [class.active]="vistaParque() === 'TARJETAS'"
-              [attr.aria-pressed]="vistaParque() === 'TARJETAS'"
-              (click)="vistaParque.set('TARJETAS')"
-            >▦ Tarjetas</button>
-            <button
-              type="button"
-              [class.active]="vistaParque() === 'LISTA'"
-              [attr.aria-pressed]="vistaParque() === 'LISTA'"
-              (click)="vistaParque.set('LISTA')"
-            >☷ Lista</button>
-          </div>
-        </section>
-
-        <section *ngIf="vistaParque() === 'TARJETAS'" class="workstation-grid">
-          <article *ngFor="let puesto of puestosFiltrados()" class="workstation-card">
-            <div class="workstation-heading">
-              <span class="record-icon">⌘</span>
-              <div class="workstation-title">
-                <span class="type-badge">PUESTO</span>
-                <h3>{{ puesto.nombrePuesto }}</h3>
-                <p>{{ puesto.usuarioAsignado }}</p>
+      <div class="page-content">
+        @defer (when vistaActiva() === 'TICKETS') {
+          <app-support-tickets *ngIf="vistaActiva() === 'TICKETS'"></app-support-tickets>
+        } @placeholder {
+        } @loading (after 100ms) {
+          <p class="feedback" role="status">Cargando mesa de ayuda…</p>
+        }
+        <ng-container *ngIf="authService.user()?.role !== 'solicitante'">
+          <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">OPERACIONES</span>
+                <h2>Parque informático</h2>
+                <p>Encontrá un puesto y consultá su equipamiento en segundos.</p>
               </div>
-              <button
-                type="button"
-                class="icon-button danger-icon"
-                [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
-                (click)="eliminarPuesto(puesto.id)"
-              >×</button>
-            </div>
-            <div class="location-line"><span aria-hidden="true">⌖</span>{{ obtenerNombreAreaPiso(puesto.areaId) }}</div>
-            <div class="asset-code"><span>Código de seguimiento</span><code>{{ puesto.codigoSeguimiento }}</code></div>
-            <div class="component-summary">
-              <span class="control-label">Equipamiento instalado</span>
-              <div *ngIf="puesto.componentes.length; else sinComponentes" class="component-chips">
-                <span *ngFor="let componente of puesto.componentes" class="component-chip">
-                  {{ componente.tipo }}
-                  <small *ngIf="componente.codigoSeguimiento">{{ componente.codigoSeguimiento }}</small>
+              <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PUESTO')">
+                <span aria-hidden="true">＋</span> Nuevo puesto
+              </button>
+            </section>
+
+            <section class="stats-grid" aria-label="Resumen del inventario">
+              <article class="stat-card">
+                <span class="stat-icon icon-indigo">▦</span>
+                <div>
+                  <span>Puestos registrados</span><strong>{{ puestos().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-blue">⌂</span>
+                <div>
+                  <span>Áreas activas</span><strong>{{ areas().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-amber">▣</span>
+                <div>
+                  <span>Alertas de stock</span><strong>{{ componentesStockBajo() }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-green">⌁</span>
+                <div>
+                  <span>Equipos de red</span><strong>{{ equiposRed().length }}</strong>
+                </div>
+              </article>
+            </section>
+
+            <section class="filter-panel">
+              <div class="filter-title">BUSCADOR</div>
+              <label class="search-control">
+                <span class="control-label">Buscar puesto</span>
+                <span class="input-with-icon">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    type="search"
+                    [ngModel]="busquedaParque()"
+                    (ngModelChange)="busquedaParque.set($event)"
+                    placeholder="Usuario, marca o número de serie"
+                  />
                 </span>
-              </div>
-              <ng-template #sinComponentes><p class="muted-copy">Sin componentes registrados.</p></ng-template>
-            </div>
-            <div class="card-actions">
-              <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">Ver ficha</button>
-              <button type="button" class="text-button" (click)="verFicha(puesto.id)">Ver detalles <span aria-hidden="true">→</span></button>
-            </div>
-            <details class="quick-replace">
-              <summary>Reemplazar componente desde stock</summary>
-              <div class="quick-replace-controls">
-                <select #selectTipo aria-label="Tipo de componente a reemplazar">
-                  <option *ngFor="let tipo of tiposPerifericos" [value]="tipo">{{ tipo }}</option>
+              </label>
+              <label>
+                <span class="control-label">Piso</span>
+                <select
+                  [ngModel]="pisoSeleccionadoId()"
+                  (ngModelChange)="pisoSeleccionadoId.set($event); areaSeleccionadaId.set('TODAS')"
+                >
+                  <option value="TODOS">Todos los pisos</option>
+                  <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
                 </select>
-                <select #selectInsumo aria-label="Seleccionar insumo de stock">
-                  <option value="">Seleccionar insumo</option>
-                  <option *ngFor="let insumo of stock()" [value]="insumo.id" [disabled]="insumo.cantidadDisponible <= 0">
-                    {{ insumo.marca }} {{ insumo.especificacion }} ({{ insumo.cantidadDisponible }})
+              </label>
+              <label>
+                <span class="control-label">Área</span>
+                <select
+                  [ngModel]="areaSeleccionadaId()"
+                  (ngModelChange)="areaSeleccionadaId.set($event)"
+                >
+                  <option value="TODAS">Todas las áreas</option>
+                  <option *ngFor="let area of areasFiltradas()" [value]="area.id">
+                    {{ area.nombre }}
                   </option>
                 </select>
-                <button type="button" class="secondary-button" (click)="ejecutarReemplazo(puesto.id, selectTipo.value, selectInsumo.value)">Reemplazar</button>
-              </div>
-            </details>
-          </article>
-          <div *ngIf="puestosFiltrados().length === 0" class="empty-state">
-            <span class="empty-icon">⌕</span>
-            <h3>No encontramos puestos</h3>
-            <p>Probá cambiar los filtros o registrar un nuevo puesto.</p>
-            <button type="button" class="secondary-button" (click)="abrirModal('NUEVO_PUESTO')">Crear puesto</button>
-          </div>
-        </section>
-
-        <section *ngIf="vistaParque() === 'LISTA'" class="data-panel workstation-list-panel" aria-label="Puestos de trabajo en lista">
-          <div class="table-scroll">
-            <table class="data-table workstation-list-table">
-              <thead>
-                <tr>
-                  <th>Puesto / Usuario</th>
-                  <th>Ubicación</th>
-                  <th>Componentes</th>
-                  <th>ID único del puesto</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let puesto of puestosFiltrados()">
-                  <td>
-                    <strong>{{ puesto.nombrePuesto }}</strong>
-                    <small>{{ puesto.usuarioAsignado }}</small>
-                  </td>
-                  <td>{{ obtenerNombreAreaPiso(puesto.areaId) }}</td>
-                  <td>
-                    <div *ngIf="puesto.componentes.length; else listaSinComponentes" class="list-component-tags">
-                      <span *ngFor="let componente of puesto.componentes" class="list-component-tag">
-                        {{ componente.tipo }}
-                        <code *ngIf="componente.codigoSeguimiento">{{ componente.codigoSeguimiento }}</code>
-                      </span>
-                    </div>
-                    <ng-template #listaSinComponentes><span class="muted-copy">Sin componentes</span></ng-template>
-                  </td>
-                  <td><code class="list-tracking-code">{{ puesto.codigoSeguimiento }}</code></td>
-                  <td>
-                    <div class="list-actions">
-                      <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">Ver ficha</button>
-                      <details class="quick-replace list-quick-replace">
-                        <summary>Reemplazar</summary>
-                        <div class="quick-replace-controls">
-                          <select #listaSelectTipo aria-label="Tipo de componente a reemplazar">
-                            <option *ngFor="let tipo of tiposPerifericos" [value]="tipo">{{ tipo }}</option>
-                          </select>
-                          <select #listaSelectInsumo aria-label="Seleccionar insumo de stock">
-                            <option value="">Seleccionar insumo</option>
-                            <option *ngFor="let insumo of stock()" [value]="insumo.id" [disabled]="insumo.cantidadDisponible <= 0">
-                              {{ insumo.marca }} {{ insumo.especificacion }} ({{ insumo.cantidadDisponible }})
-                            </option>
-                          </select>
-                          <button type="button" class="secondary-button" (click)="ejecutarReemplazo(puesto.id, listaSelectTipo.value, listaSelectInsumo.value)">Confirmar</button>
-                        </div>
-                      </details>
-                      <button
-                        type="button"
-                        class="icon-button danger-icon"
-                        [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
-                        (click)="eliminarPuesto(puesto.id)"
-                      >×</button>
-                    </div>
-                  </td>
-                </tr>
-                <tr *ngIf="puestosFiltrados().length === 0">
-                  <td colspan="5" class="table-empty">
-                    No encontramos puestos. Probá cambiar los filtros o registrá un nuevo puesto.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section *ngIf="puestoFicha(); let ficha" class="modal-backdrop" (click)="cerrarFicha()">
-          <article class="dialog detail-dialog" role="dialog" aria-modal="true" aria-labelledby="ficha-titulo" (click)="$event.stopPropagation()">
-            <header class="dialog-header">
-              <div><span class="eyebrow">FICHA DEL ACTIVO</span><h2 id="ficha-titulo">{{ ficha.nombrePuesto }}</h2></div>
-              <button type="button" class="icon-button" aria-label="Cerrar ficha" (click)="cerrarFicha()">×</button>
-            </header>
-            <div class="detail-meta">
-              <span><small>Usuario asignado</small><strong>{{ ficha.usuarioAsignado }}</strong></span>
-              <span><small>Ubicación</small><strong>{{ obtenerNombreAreaPiso(ficha.areaId) }}</strong></span>
-              <span><small>Código del puesto</small><strong>{{ ficha.codigoSeguimiento }}</strong></span>
-            </div>
-            <button type="button" class="primary-button print-button" (click)="imprimirEtiquetasDePuesto(ficha.id)">
-              🖨️ Imprimir etiquetas de este puesto
-            </button>
-            <p *ngIf="errorEtiquetas()" class="inline-error" role="alert">{{ errorEtiquetas() }}</p>
-            <section class="detail-section">
-              <div class="section-heading">
-                <div><h3>Componentes instalados</h3><p>{{ ficha.componentes.length }} elementos registrados</p></div>
-                <button type="button" class="secondary-button add-component-button" (click)="abrirModalComponente(ficha.id)">＋ Añadir Componente</button>
-              </div>
-              <ul class="detail-list">
-                <li *ngFor="let componente of ficha.componentes">
-                  <span class="record-icon small-record-icon">▣</span>
-                  <span class="detail-component"><strong>{{ componente.tipo }}</strong><small>{{ componente.marca }}{{ componente.modelo ? ' · ' + componente.modelo : '' }} · {{ componente.especificacion }}</small></span>
-                  <span *ngIf="tiposPerifericosExternos.includes(componente.tipo)" class="tracking-badge">
-                    ID único · {{ componente.codigoSeguimiento || 'Pendiente' }}
-                  </span>
-                  <span *ngIf="componente.numeroSerie" class="serial-code">S/N {{ componente.numeroSerie }}</span>
-                </li>
-                <li *ngIf="ficha.componentes.length === 0" class="muted-copy">No hay componentes registrados.</li>
-              </ul>
+              </label>
+              <span class="results-count">{{ puestosFiltrados().length }} resultados</span>
             </section>
-            <section class="detail-section">
-              <div class="section-heading"><div><h3>Actividad reciente</h3><p>Historial auditado del puesto</p></div></div>
-              <ul class="detail-list movement-list">
-                <li *ngFor="let movimiento of movimientosPuestoFicha()">
-                  <span class="movement-dot"></span>
-                  <span class="detail-component"><strong>{{ movimiento.tipo }}</strong><small>{{ movimiento.detalle }}</small></span>
-                  <time>{{ movimiento.fecha | date:'dd/MM/yy HH:mm' }}</time>
-                </li>
-                <li *ngIf="movimientosPuestoFicha().length === 0" class="muted-copy">No hay movimientos registrados.</li>
-              </ul>
+
+            <section class="section-heading">
+              <div>
+                <h3>Puestos de trabajo</h3>
+                <p>Seleccioná una ficha para consultar el detalle o imprimir sus etiquetas.</p>
+              </div>
+              <div class="view-switch" role="group" aria-label="Vista de puestos de trabajo">
+                <button
+                  type="button"
+                  [class.active]="vistaParque() === 'TARJETAS'"
+                  [attr.aria-pressed]="vistaParque() === 'TARJETAS'"
+                  (click)="vistaParque.set('TARJETAS')"
+                >
+                  ▦ Tarjetas
+                </button>
+                <button
+                  type="button"
+                  [class.active]="vistaParque() === 'LISTA'"
+                  [attr.aria-pressed]="vistaParque() === 'LISTA'"
+                  (click)="vistaParque.set('LISTA')"
+                >
+                  ☷ Lista
+                </button>
+              </div>
             </section>
-          </article>
-        </section>
-      </main>
 
-      <main *ngIf="vistaActiva() === 'STOCK'" class="page-view">
-        <section class="page-heading">
-          <div><span class="eyebrow">ABASTECIMIENTO</span><h2>Depósito y stock</h2><p>Controlá existencias y anticipá necesidades de reposición.</p></div>
-          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_STOCK')">＋ Ingresar stock</button>
-        </section>
-        <section class="stats-grid compact-stats">
-          <article class="stat-card"><span class="stat-icon icon-indigo">▣</span><div><span>Productos</span><strong>{{ stock().length }}</strong></div></article>
-          <article class="stat-card"><span class="stat-icon icon-amber">!</span><div><span>Stock bajo</span><strong>{{ componentesStockBajo() }}</strong></div></article>
-        </section>
-        <section class="data-panel">
-          <div class="panel-heading"><div><h3>Inventario disponible</h3><p>Existencias actuales por tipo y producto.</p></div></div>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead><tr><th>Tipo</th><th>Producto</th><th>Disponibilidad</th><th>Stock mínimo</th><th>Estado</th><th><span class="sr-only">Acciones</span></th></tr></thead>
-              <tbody>
-                <tr *ngFor="let insumo of stock()">
-                  <td><span class="type-badge">{{ insumo.tipo }}</span></td>
-                  <td><strong>{{ insumo.marca }}</strong><small>{{ insumo.especificacion }}</small></td>
-                  <td><strong>{{ insumo.cantidadDisponible }}</strong> unidades</td>
-                  <td>{{ insumo.stockMinimo }} unidades</td>
-                  <td><span class="status-badge" [class.status-warning]="insumo.cantidadDisponible <= insumo.stockMinimo" [class.status-ok]="insumo.cantidadDisponible > insumo.stockMinimo">
-                    {{ insumo.cantidadDisponible <= insumo.stockMinimo ? 'Reponer' : 'Disponible' }}
-                  </span></td>
-                  <td><button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + insumo.marca" (click)="eliminarInsumo(insumo.id)">×</button></td>
-                </tr>
-                <tr *ngIf="stock().length === 0"><td colspan="6" class="table-empty">Todavía no hay productos en stock.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </main>
-
-      <main *ngIf="vistaActiva() === 'EDIFICIO'" class="page-view">
-        <section class="page-heading">
-          <div><span class="eyebrow">ORGANIZACIÓN</span><h2>Pisos y áreas</h2><p>Administrá la estructura física donde se encuentran los activos.</p></div>
-          <div class="heading-actions">
-            <button type="button" class="secondary-button" (click)="abrirModal('NUEVA_AREA')" [disabled]="!pisoSeleccionadoEdificio()">＋ Nueva área</button>
-            <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PISO')">＋ Nuevo piso</button>
-          </div>
-        </section>
-        <section class="building-layout">
-          <article class="data-panel building-panel">
-            <div class="panel-heading"><div><h3>Pisos</h3><p>{{ pisos().length }} niveles registrados</p></div></div>
-            <div class="building-list">
-              <button
-                *ngFor="let piso of pisos()"
-                type="button"
-                class="building-item"
-                [class.selected]="pisoSeleccionadoEdificio() === piso.id"
-                (click)="pisoSeleccionadoEdificio.set(piso.id)"
-              >
-                <span class="record-icon">⌂</span>
-                <span><strong>{{ piso.nombre }}</strong><small>Nivel {{ piso.nivel }}</small></span>
-                <span class="building-arrow">→</span>
-              </button>
-              <div *ngIf="pisos().length === 0" class="empty-inline">Aún no hay pisos. Creá el primero para comenzar.</div>
-            </div>
-          </article>
-          <article class="data-panel building-panel">
-            <div class="panel-heading">
-              <div><h3>{{ pisoSeleccionadoEdificio() ? obtenerNombrePiso(pisoSeleccionadoEdificio()) : 'Áreas' }}</h3><p>Áreas del piso seleccionado</p></div>
-              <span *ngIf="pisoSeleccionadoEdificio()" class="count-badge">{{ areasDelPisoEdificio().length }} áreas</span>
-            </div>
-            <div *ngIf="pisoSeleccionadoEdificio(); else seleccionarPiso" class="building-list">
-              <article *ngFor="let area of areasDelPisoEdificio()" class="area-item">
-                <span class="record-icon area-icon">⌖</span>
-                <span><strong>{{ area.nombre }}</strong><small>{{ obtenerNombrePiso(area.pisoId) }}</small></span>
-                <button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + area.nombre" (click)="eliminarArea(area.id)">×</button>
+            <section *ngIf="vistaParque() === 'TARJETAS'" class="workstation-grid">
+              <article *ngFor="let puesto of puestosFiltrados()" class="workstation-card">
+                <div class="workstation-heading">
+                  <span class="record-icon">⌘</span>
+                  <div class="workstation-title">
+                    <span class="type-badge">PUESTO</span>
+                    <h3>{{ puesto.nombrePuesto }}</h3>
+                    <p>{{ puesto.usuarioAsignado }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="icon-button danger-icon"
+                    [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
+                    (click)="eliminarPuesto(puesto.id)"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div class="location-line">
+                  <span aria-hidden="true">⌖</span>{{ obtenerNombreAreaPiso(puesto.areaId) }}
+                </div>
+                <div class="asset-code">
+                  <span>Código de seguimiento</span><code>{{ puesto.codigoSeguimiento }}</code>
+                </div>
+                <div class="component-summary">
+                  <span class="control-label">Equipamiento instalado</span>
+                  <div
+                    *ngIf="puesto.componentes.length; else sinComponentes"
+                    class="component-chips"
+                  >
+                    <span *ngFor="let componente of puesto.componentes" class="component-chip">
+                      {{ componente.tipo }}
+                      <small *ngIf="componente.codigoSeguimiento">{{
+                        componente.codigoSeguimiento
+                      }}</small>
+                    </span>
+                  </div>
+                  <ng-template #sinComponentes
+                    ><p class="muted-copy">Sin componentes registrados.</p></ng-template
+                  >
+                </div>
+                <div class="card-actions">
+                  <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">
+                    Ver ficha
+                  </button>
+                  <button type="button" class="text-button" (click)="verFicha(puesto.id)">
+                    Ver detalles <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  class="secondary-button replacement-launcher"
+                  [disabled]="puesto.componentes.length === 0"
+                  (click)="abrirReemplazo(puesto.id)"
+                >
+                  Reemplazar equipo
+                </button>
               </article>
-              <div *ngIf="areasDelPisoEdificio().length === 0" class="empty-inline">Este piso todavía no tiene áreas.</div>
-            </div>
-            <ng-template #seleccionarPiso><div class="empty-inline">Seleccioná un piso para consultar sus áreas.</div></ng-template>
-          </article>
-        </section>
-      </main>
+              <div *ngIf="puestosFiltrados().length === 0" class="empty-state">
+                <span class="empty-icon">⌕</span>
+                <h3>No encontramos puestos</h3>
+                <p>Probá cambiar los filtros o registrar un nuevo puesto.</p>
+                <button type="button" class="secondary-button" (click)="abrirModal('NUEVO_PUESTO')">
+                  Crear puesto
+                </button>
+              </div>
+            </section>
 
-      <main *ngIf="vistaActiva() === 'REDES'" class="page-view">
-        <section class="page-heading">
-          <div><span class="eyebrow">INFRAESTRUCTURA</span><h2>Equipos de red</h2><p>Switches, routers y puntos de acceso asignados por ubicación.</p></div>
-          <button type="button" class="primary-button" (click)="abrirModal('NUEVO_EQUIPO_RED')">＋ Registrar equipo</button>
-        </section>
-        <section class="record-grid network-grid">
-          <article *ngFor="let equipo of equiposRed()" class="record-card">
-            <span class="record-icon">⌁</span>
-            <div class="record-info">
-              <span class="type-badge">{{ equipo.tipo }}</span>
-              <h3>{{ equipo.marca }} {{ equipo.modelo }}</h3>
-              <p>{{ obtenerNombreAreaPiso(equipo.areaId) }}</p>
-              <small>Código de seguimiento · <strong>{{ equipo.codigoSeguimiento }}</strong></small>
-            </div>
-            <button type="button" class="icon-button danger-icon" [attr.aria-label]="'Eliminar ' + equipo.marca + ' ' + equipo.modelo" (click)="eliminarEquipoRed(equipo)">×</button>
-          </article>
-          <div *ngIf="equiposRed().length === 0" class="empty-state"><span class="empty-icon">⌁</span><h3>Sin equipos registrados</h3><p>Agregá equipos de red para mantenerlos organizados.</p></div>
-        </section>
-      </main>
+            <section
+              *ngIf="vistaParque() === 'LISTA'"
+              class="data-panel workstation-list-panel"
+              aria-label="Puestos de trabajo en lista"
+            >
+              <div class="table-scroll">
+                <table class="data-table workstation-list-table">
+                  <thead>
+                    <tr>
+                      <th>Puesto / Usuario</th>
+                      <th>Ubicación</th>
+                      <th>Componentes</th>
+                      <th>ID único del puesto</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let puesto of puestosFiltrados()">
+                      <td>
+                        <strong>{{ puesto.nombrePuesto }}</strong>
+                        <small>{{ puesto.usuarioAsignado }}</small>
+                      </td>
+                      <td>{{ obtenerNombreAreaPiso(puesto.areaId) }}</td>
+                      <td>
+                        <div
+                          *ngIf="puesto.componentes.length; else listaSinComponentes"
+                          class="list-component-tags"
+                        >
+                          <span
+                            *ngFor="let componente of puesto.componentes"
+                            class="list-component-tag"
+                          >
+                            {{ componente.tipo }}
+                            <code *ngIf="componente.codigoSeguimiento">{{
+                              componente.codigoSeguimiento
+                            }}</code>
+                          </span>
+                        </div>
+                        <ng-template #listaSinComponentes
+                          ><span class="muted-copy">Sin componentes</span></ng-template
+                        >
+                      </td>
+                      <td>
+                        <code class="list-tracking-code">{{ puesto.codigoSeguimiento }}</code>
+                      </td>
+                      <td>
+                        <div class="list-actions">
+                          <button
+                            type="button"
+                            class="secondary-button"
+                            (click)="verFicha(puesto.id)"
+                          >
+                            Ver ficha
+                          </button>
+                          <button
+                            type="button"
+                            class="secondary-button"
+                            [disabled]="puesto.componentes.length === 0"
+                            (click)="abrirReemplazo(puesto.id)"
+                          >
+                            Reemplazar
+                          </button>
+                          <button
+                            type="button"
+                            class="icon-button danger-icon"
+                            [attr.aria-label]="'Eliminar ' + puesto.nombrePuesto"
+                            (click)="eliminarPuesto(puesto.id)"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr *ngIf="puestosFiltrados().length === 0">
+                      <td colspan="5" class="table-empty">
+                        No encontramos puestos. Probá cambiar los filtros o registrá un nuevo
+                        puesto.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
 
-      <main *ngIf="vistaActiva() === 'TALLER'" class="page-view">
-        <section class="page-heading">
-          <div><span class="eyebrow">MANTENIMIENTO</span><h2>Taller y scrap</h2><p>Seguimiento de componentes retirados y su estado actual.</p></div>
-          <span class="count-badge">{{ componentesRetirados().length }} componentes</span>
-        </section>
-        <section class="record-grid">
-          <article *ngFor="let retirado of componentesRetirados()" class="record-card">
-            <span class="record-icon">⚒</span>
-            <div class="record-info">
-              <span class="status-badge" [class.status-danger]="retirado.estado === 'SCRAP'" [class.status-warning]="retirado.estado === 'REPARACION'">{{ retirado.estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}</span>
-              <h3>{{ retirado.componente.tipo }} · {{ retirado.componente.marca }}{{ retirado.componente.modelo ? ' · ' + retirado.componente.modelo : '' }}</h3>
-              <p>{{ retirado.componente.especificacion }}</p>
-              <small>Puesto: <strong>{{ retirado.puestoNombre }}</strong> · Retirado: {{ retirado.fechaRetiro | date:'dd/MM/yyyy HH:mm' }}</small>
-              <small *ngIf="retirado.componente.codigoSeguimiento">Código · {{ retirado.componente.codigoSeguimiento }}</small>
-            </div>
-            <label class="status-control">Estado
-              <select [ngModel]="retirado.estado" (ngModelChange)="cambiarEstadoRetirado(retirado.id, $event)">
-                <option *ngFor="let estado of estadosComponente" [ngValue]="estado">{{ estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}</option>
-              </select>
-            </label>
-          </article>
-          <div *ngIf="componentesRetirados().length === 0" class="empty-state"><span class="empty-icon">⚒</span><h3>Taller al día</h3><p>Los componentes retirados aparecerán aquí para su seguimiento.</p></div>
-        </section>
-      </main>
+            <section
+              *ngIf="puestoFicha(); let ficha"
+              class="modal-backdrop"
+              (click)="cerrarFicha()"
+            >
+              <article
+                class="dialog detail-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="ficha-titulo"
+                (click)="$event.stopPropagation()"
+              >
+                <header class="dialog-header">
+                  <div>
+                    <span class="eyebrow">FICHA DEL ACTIVO</span>
+                    <h2 id="ficha-titulo">{{ ficha.nombrePuesto }}</h2>
+                  </div>
+                  <button
+                    type="button"
+                    class="icon-button"
+                    aria-label="Cerrar ficha"
+                    (click)="cerrarFicha()"
+                  >
+                    ×
+                  </button>
+                </header>
+                <div class="detail-meta">
+                  <span
+                    ><small>Usuario asignado</small
+                    ><strong>{{ ficha.usuarioAsignado }}</strong></span
+                  >
+                  <span
+                    ><small>Ubicación</small
+                    ><strong>{{ obtenerNombreAreaPiso(ficha.areaId) }}</strong></span
+                  >
+                  <span
+                    ><small>Código del puesto</small
+                    ><strong>{{ ficha.codigoSeguimiento }}</strong></span
+                  >
+                </div>
+                <button
+                  type="button"
+                  class="primary-button print-button"
+                  (click)="imprimirEtiquetasDePuesto(ficha.id)"
+                >
+                  🖨️ Imprimir etiquetas de este puesto
+                </button>
+                <p *ngIf="errorEtiquetas()" class="inline-error" role="alert">
+                  {{ errorEtiquetas() }}
+                </p>
+                <section class="detail-section">
+                  <div class="section-heading">
+                    <div>
+                      <h3>Componentes instalados</h3>
+                      <p>{{ ficha.componentes.length }} elementos registrados</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="secondary-button add-component-button"
+                      (click)="abrirModalComponente(ficha.id)"
+                    >
+                      ＋ Añadir Componente
+                    </button>
+                  </div>
+                  <ul class="detail-list">
+                    <li *ngFor="let componente of ficha.componentes">
+                      <span class="record-icon small-record-icon">▣</span>
+                      <span class="detail-component"
+                        ><strong>{{ componente.tipo }}</strong
+                        ><small
+                          >{{ componente.marca
+                          }}{{ componente.modelo ? ' · ' + componente.modelo : '' }} ·
+                          {{ componente.especificacion }}</small
+                        ></span
+                      >
+                      <span
+                        *ngIf="tiposPerifericosExternos.includes(componente.tipo)"
+                        class="tracking-badge"
+                      >
+                        ID único · {{ componente.codigoSeguimiento || 'Pendiente' }}
+                      </span>
+                      <span *ngIf="componente.numeroSerie" class="serial-code"
+                        >S/N {{ componente.numeroSerie }}</span
+                      >
+                    </li>
+                    <li *ngIf="ficha.componentes.length === 0" class="muted-copy">
+                      No hay componentes registrados.
+                    </li>
+                  </ul>
+                </section>
+                <section class="detail-section">
+                  <div class="section-heading">
+                    <div>
+                      <h3>Actividad reciente</h3>
+                      <p>Historial auditado del puesto</p>
+                    </div>
+                  </div>
+                  <ul class="detail-list movement-list">
+                    <li *ngFor="let movimiento of movimientosPuestoFicha()">
+                      <span class="movement-dot"></span>
+                      <span class="detail-component"
+                        ><strong>{{ movimiento.tipo }}</strong
+                        ><small>{{ movimiento.detalle }}</small></span
+                      >
+                      <time>{{ movimiento.fecha | date: 'dd/MM/yy HH:mm' }}</time>
+                    </li>
+                    <li *ngIf="movimientosPuestoFicha().length === 0" class="muted-copy">
+                      No hay movimientos registrados.
+                    </li>
+                  </ul>
+                </section>
+              </article>
+            </section>
+          </main>
 
-      <main *ngIf="vistaActiva() === 'REPORTES'" class="page-view">
-        <section class="page-heading">
-          <div><span class="eyebrow">ANÁLISIS</span><h2>Reportes e historial</h2><p>Una vista general del inventario y sus movimientos recientes.</p></div>
-          <div class="heading-actions backup-actions">
-            <button type="button" class="secondary-button" (click)="exportarRespaldoJson()">Descargar respaldo JSON</button>
-            <ng-container *ngIf="authService.user()?.role === 'admin'">
-              <button type="button" class="secondary-button backup-file-button" [disabled]="backupImportando() || !inventarioVacio()" [title]="inventarioVacio() ? 'Importar inventario respaldado' : 'La importación solo se habilita cuando el servidor no tiene datos.'" (click)="backupFileInput.click()">Restaurar respaldo</button>
-              <input #backupFileInput class="sr-only" type="file" accept="application/json,.json" [disabled]="backupImportando() || !inventarioVacio()" (change)="importarRespaldoJson($event)" />
-            </ng-container>
-            <button type="button" class="primary-button" (click)="exportarInventarioExcel()">↓ Exportar a Excel</button>
-          </div>
-        </section>
-        <section class="stats-grid">
-          <article class="stat-card"><span class="stat-icon icon-indigo">⌂</span><div><span>Pisos</span><strong>{{ pisos().length }}</strong></div></article>
-          <article class="stat-card"><span class="stat-icon icon-blue">⌖</span><div><span>Áreas</span><strong>{{ areas().length }}</strong></div></article>
-          <article class="stat-card"><span class="stat-icon icon-green">▦</span><div><span>Puestos</span><strong>{{ puestos().length }}</strong></div></article>
-          <article class="stat-card"><span class="stat-icon icon-amber">▣</span><div><span>Productos</span><strong>{{ stock().length }}</strong></div></article>
-        </section>
-        <section *ngIf="authService.user()?.role === 'admin'" class="data-panel admin-users-panel">
-          <div class="panel-heading"><div><h3>Usuarios del sistema</h3><p>Administrá el acceso individual al inventario compartido.</p></div></div>
-          <form class="user-create-form" (ngSubmit)="crearUsuario()">
-            <label>Usuario
-              <input name="newUsername" required minlength="3" autocomplete="off" [ngModel]="nuevoUsuario().username" (ngModelChange)="actualizarNuevoUsuario('username', $event)" />
-            </label>
-            <label>Contraseña inicial
-              <input name="newPassword" type="password" required minlength="12" autocomplete="new-password" [ngModel]="nuevoUsuario().password" (ngModelChange)="actualizarNuevoUsuario('password', $event)" />
-            </label>
-            <label>Permisos
-              <select name="newRole" [ngModel]="nuevoUsuario().role" (ngModelChange)="actualizarNuevoUsuario('role', $event)">
-                <option value="operator">Operador</option>
-                <option value="admin">Administrador</option>
-              </select>
-            </label>
-            <button type="submit" class="primary-button">Crear usuario</button>
-          </form>
-          <div class="admin-user-list">
-            <article *ngFor="let usuario of authService.usuarios()">
-              <strong>{{ usuario.username }}</strong><span>{{ usuario.role === 'admin' ? 'Administrador' : 'Operador' }}</span>
-            </article>
-          </div>
-        </section>
-        <section class="data-panel history-panel">
-          <div class="panel-heading"><div><h3>Actividad del inventario</h3><p>Movimientos auditados más recientes</p></div></div>
-          <div *ngIf="historial().length === 0" class="empty-inline">Todavía no hay movimientos para mostrar.</div>
-          <article *ngFor="let movimiento of historial()" class="history-item">
-            <span class="movement-dot" [class.movement-success]="movimiento.tipo === 'INGRESO_STOCK' || movimiento.tipo === 'ALTA_PUESTO' || movimiento.tipo === 'ALTA_COMPONENTE'"></span>
-            <div><strong>{{ movimiento.detalle }}</strong><small>{{ movimiento.tipo }}</small></div>
-            <time>{{ movimiento.fecha | date:'dd/MM/yyyy HH:mm' }}</time>
-          </article>
-        </section>
-      </main>
-    </div>
-  </div>
-</div>
+          <main *ngIf="vistaActiva() === 'STOCK'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">ABASTECIMIENTO</span>
+                <h2>Depósito y stock</h2>
+                <p>Controlá existencias y anticipá necesidades de reposición.</p>
+              </div>
+              <button type="button" class="primary-button" (click)="abrirModal('NUEVO_STOCK')">
+                ＋ Ingresar stock
+              </button>
+            </section>
+            <section class="stats-grid compact-stats">
+              <article class="stat-card">
+                <span class="stat-icon icon-indigo">▣</span>
+                <div>
+                  <span>Productos</span><strong>{{ stock().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-amber">!</span>
+                <div>
+                  <span>Stock bajo</span><strong>{{ componentesStockBajo() }}</strong>
+                </div>
+              </article>
+            </section>
+            <section class="data-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>Inventario disponible</h3>
+                  <p>Existencias actuales por tipo y producto.</p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Tipo</th>
+                      <th>Producto</th>
+                      <th>Disponibilidad</th>
+                      <th>Stock mínimo</th>
+                      <th>Estado</th>
+                      <th><span class="sr-only">Acciones</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let insumo of stock()">
+                      <td>
+                        <span class="type-badge">{{ insumo.tipo }}</span>
+                      </td>
+                      <td>
+                        <strong>{{ insumo.marca }}</strong
+                        ><small>{{ insumo.especificacion }}</small>
+                      </td>
+                      <td>
+                        <strong>{{ insumo.cantidadDisponible }}</strong> unidades
+                      </td>
+                      <td>{{ insumo.stockMinimo }} unidades</td>
+                      <td>
+                        <span
+                          class="status-badge"
+                          [class.status-warning]="insumo.cantidadDisponible <= insumo.stockMinimo"
+                          [class.status-ok]="insumo.cantidadDisponible > insumo.stockMinimo"
+                        >
+                          {{
+                            insumo.cantidadDisponible <= insumo.stockMinimo
+                              ? 'Reponer'
+                              : 'Disponible'
+                          }}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          class="icon-button danger-icon"
+                          [attr.aria-label]="'Eliminar ' + insumo.marca"
+                          (click)="eliminarInsumo(insumo.id)"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                    <tr *ngIf="stock().length === 0">
+                      <td colspan="6" class="table-empty">Todavía no hay productos en stock.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </main>
 
-<section *ngIf="modalActivo()" class="modal-backdrop" (click)="cerrarModal()">
-  <article class="dialog form-dialog" role="dialog" aria-modal="true" aria-labelledby="form-dialog-title" (click)="$event.stopPropagation()">
-    <header class="dialog-header">
-      <div>
-        <span class="eyebrow">NUEVO REGISTRO</span>
-        <h2 id="form-dialog-title">{{ modalActivo() === 'NUEVO_PUESTO' ? 'Registrar puesto' : modalActivo() === 'NUEVO_COMPONENTE' ? 'Relevar componente instalado' : modalActivo() === 'NUEVO_STOCK' ? 'Ingresar stock' : modalActivo() === 'NUEVO_PISO' ? 'Crear piso' : modalActivo() === 'NUEVA_AREA' ? 'Crear área' : 'Registrar equipo de red' }}</h2>
+          <main *ngIf="vistaActiva() === 'EDIFICIO'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">ORGANIZACIÓN</span>
+                <h2>Pisos y áreas</h2>
+                <p>Administrá la estructura física donde se encuentran los activos.</p>
+              </div>
+              <div class="heading-actions">
+                <button
+                  type="button"
+                  class="secondary-button"
+                  (click)="abrirModal('NUEVA_AREA')"
+                  [disabled]="!pisoSeleccionadoEdificio()"
+                >
+                  ＋ Nueva área
+                </button>
+                <button type="button" class="primary-button" (click)="abrirModal('NUEVO_PISO')">
+                  ＋ Nuevo piso
+                </button>
+              </div>
+            </section>
+            <section class="building-layout">
+              <article class="data-panel building-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h3>Pisos</h3>
+                    <p>{{ pisos().length }} niveles registrados</p>
+                  </div>
+                </div>
+                <div class="building-list">
+                  <button
+                    *ngFor="let piso of pisos()"
+                    type="button"
+                    class="building-item"
+                    [class.selected]="pisoSeleccionadoEdificio() === piso.id"
+                    (click)="pisoSeleccionadoEdificio.set(piso.id)"
+                  >
+                    <span class="record-icon">⌂</span>
+                    <span
+                      ><strong>{{ piso.nombre }}</strong
+                      ><small>Nivel {{ piso.nivel }}</small></span
+                    >
+                    <span class="building-arrow">→</span>
+                  </button>
+                  <div *ngIf="pisos().length === 0" class="empty-inline">
+                    Aún no hay pisos. Creá el primero para comenzar.
+                  </div>
+                </div>
+              </article>
+              <article class="data-panel building-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h3>
+                      {{
+                        pisoSeleccionadoEdificio()
+                          ? obtenerNombrePiso(pisoSeleccionadoEdificio())
+                          : 'Áreas'
+                      }}
+                    </h3>
+                    <p>Áreas del piso seleccionado</p>
+                  </div>
+                  <span *ngIf="pisoSeleccionadoEdificio()" class="count-badge"
+                    >{{ areasDelPisoEdificio().length }} áreas</span
+                  >
+                </div>
+                <div *ngIf="pisoSeleccionadoEdificio(); else seleccionarPiso" class="building-list">
+                  <article *ngFor="let area of areasDelPisoEdificio()" class="area-item">
+                    <span class="record-icon area-icon">⌖</span>
+                    <span
+                      ><strong>{{ area.nombre }}</strong
+                      ><small>{{ obtenerNombrePiso(area.pisoId) }}</small></span
+                    >
+                    <button
+                      type="button"
+                      class="icon-button danger-icon"
+                      [attr.aria-label]="'Eliminar ' + area.nombre"
+                      (click)="eliminarArea(area.id)"
+                    >
+                      ×
+                    </button>
+                  </article>
+                  <div *ngIf="areasDelPisoEdificio().length === 0" class="empty-inline">
+                    Este piso todavía no tiene áreas.
+                  </div>
+                </div>
+                <ng-template #seleccionarPiso
+                  ><div class="empty-inline">
+                    Seleccioná un piso para consultar sus áreas.
+                  </div></ng-template
+                >
+              </article>
+            </section>
+            @defer (when vistaActiva() === 'EDIFICIO') {
+              <app-area-assets-explorer
+                *ngIf="vistaActiva() === 'EDIFICIO'"
+              ></app-area-assets-explorer>
+            } @placeholder {}
+          </main>
+
+          <main *ngIf="vistaActiva() === 'REDES'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">INFRAESTRUCTURA</span>
+                <h2>Equipos de red</h2>
+                <p>Switches, routers y puntos de acceso asignados por ubicación.</p>
+              </div>
+              <button type="button" class="primary-button" (click)="abrirModal('NUEVO_EQUIPO_RED')">
+                ＋ Registrar equipo
+              </button>
+            </section>
+            <section class="record-grid network-grid">
+              <article *ngFor="let equipo of equiposRed()" class="record-card">
+                <span class="record-icon">⌁</span>
+                <div class="record-info">
+                  <span class="type-badge">{{ equipo.tipo }}</span>
+                  <h3>{{ equipo.marca }} {{ equipo.modelo }}</h3>
+                  <p>{{ obtenerNombreAreaPiso(equipo.areaId) }}</p>
+                  <small
+                    >Código de seguimiento · <strong>{{ equipo.codigoSeguimiento }}</strong></small
+                  >
+                </div>
+                <button
+                  type="button"
+                  class="icon-button danger-icon"
+                  [attr.aria-label]="'Eliminar ' + equipo.marca + ' ' + equipo.modelo"
+                  (click)="eliminarEquipoRed(equipo)"
+                >
+                  ×
+                </button>
+              </article>
+              <div *ngIf="equiposRed().length === 0" class="empty-state">
+                <span class="empty-icon">⌁</span>
+                <h3>Sin equipos registrados</h3>
+                <p>Agregá equipos de red para mantenerlos organizados.</p>
+              </div>
+            </section>
+          </main>
+
+          <main *ngIf="vistaActiva() === 'TALLER'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">MANTENIMIENTO</span>
+                <h2>Taller y scrap</h2>
+                <p>Seguimiento de componentes retirados y su estado actual.</p>
+              </div>
+              <span class="count-badge">{{ componentesRetirados().length }} componentes</span>
+            </section>
+            <section class="record-grid">
+              <article *ngFor="let retirado of componentesRetirados()" class="record-card">
+                <span class="record-icon">⚒</span>
+                <div class="record-info">
+                  <span
+                    class="status-badge"
+                    [class.status-danger]="retirado.estado === 'SCRAP'"
+                    [class.status-warning]="retirado.estado === 'REPARACION'"
+                    >{{ retirado.estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}</span
+                  >
+                  <h3>
+                    {{ retirado.componente.tipo }} · {{ retirado.componente.marca
+                    }}{{ retirado.componente.modelo ? ' · ' + retirado.componente.modelo : '' }}
+                  </h3>
+                  <p>{{ retirado.componente.especificacion }}</p>
+                  <small
+                    >Puesto: <strong>{{ retirado.puestoNombre }}</strong> · Retirado:
+                    {{ retirado.fechaRetiro | date: 'dd/MM/yyyy HH:mm' }}</small
+                  >
+                  <small *ngIf="retirado.componente.codigoSeguimiento"
+                    >Código · {{ retirado.componente.codigoSeguimiento }}</small
+                  >
+                </div>
+                <label class="status-control"
+                  >Estado
+                  <select
+                    [ngModel]="retirado.estado"
+                    (ngModelChange)="cambiarEstadoRetirado(retirado.id, $event)"
+                  >
+                    <option *ngFor="let estado of estadosComponente" [ngValue]="estado">
+                      {{ estado === 'SCRAP' ? 'Scrap' : 'En reparación' }}
+                    </option>
+                  </select>
+                </label>
+              </article>
+              <div *ngIf="componentesRetirados().length === 0" class="empty-state">
+                <span class="empty-icon">⚒</span>
+                <h3>Taller al día</h3>
+                <p>Los componentes retirados aparecerán aquí para su seguimiento.</p>
+              </div>
+            </section>
+          </main>
+
+          <main *ngIf="vistaActiva() === 'REPORTES'" class="page-view">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">ANÁLISIS</span>
+                <h2>Reportes e historial</h2>
+                <p>Una vista general del inventario y sus movimientos recientes.</p>
+              </div>
+              <div class="heading-actions backup-actions">
+                <button type="button" class="secondary-button" (click)="exportarRespaldoJson()">
+                  Descargar respaldo JSON
+                </button>
+                <ng-container *ngIf="authService.user()?.role === 'admin'">
+                  <button
+                    type="button"
+                    class="secondary-button backup-file-button"
+                    [disabled]="backupImportando() || !inventarioVacio()"
+                    [title]="
+                      inventarioVacio()
+                        ? 'Importar inventario respaldado'
+                        : 'La importación solo se habilita cuando el servidor no tiene datos.'
+                    "
+                    (click)="backupFileInput.click()"
+                  >
+                    Restaurar respaldo
+                  </button>
+                  <input
+                    #backupFileInput
+                    class="sr-only"
+                    type="file"
+                    accept="application/json,.json"
+                    [disabled]="backupImportando() || !inventarioVacio()"
+                    (change)="importarRespaldoJson($event)"
+                  />
+                </ng-container>
+                <button type="button" class="primary-button" (click)="exportarInventarioExcel()">
+                  ↓ Exportar a Excel
+                </button>
+              </div>
+            </section>
+            <section class="stats-grid">
+              <article class="stat-card">
+                <span class="stat-icon icon-indigo">⌂</span>
+                <div>
+                  <span>Pisos</span><strong>{{ pisos().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-blue">⌖</span>
+                <div>
+                  <span>Áreas</span><strong>{{ areas().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-green">▦</span>
+                <div>
+                  <span>Puestos</span><strong>{{ puestos().length }}</strong>
+                </div>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon icon-amber">▣</span>
+                <div>
+                  <span>Productos</span><strong>{{ stock().length }}</strong>
+                </div>
+              </article>
+            </section>
+            <section
+              *ngIf="authService.user()?.role === 'admin'"
+              class="data-panel admin-users-panel"
+            >
+              <div class="panel-heading">
+                <div>
+                  <h3>Usuarios del sistema ({{ authService.usuarios().length }})</h3>
+                  <p>
+                    Listado completo de cuentas, perfiles y áreas. Desde cada cuenta podés
+                    restablecer su contraseña.
+                  </p>
+                </div>
+              </div>
+              <form class="user-create-form" (ngSubmit)="crearUsuario()">
+                <label
+                  >Usuario
+                  <input
+                    name="newUsername"
+                    required
+                    minlength="3"
+                    autocomplete="off"
+                    [ngModel]="nuevoUsuario().username"
+                    (ngModelChange)="actualizarNuevoUsuario('username', $event)"
+                  />
+                </label>
+                <label
+                  >Contraseña inicial
+                  <input
+                    name="newPassword"
+                    type="password"
+                    required
+                    minlength="12"
+                    autocomplete="new-password"
+                    [ngModel]="nuevoUsuario().password"
+                    (ngModelChange)="actualizarNuevoUsuario('password', $event)"
+                  />
+                </label>
+                <label
+                  >Permisos
+                  <select
+                    name="newRole"
+                    [ngModel]="nuevoUsuario().role"
+                    (ngModelChange)="actualizarNuevoUsuario('role', $event)"
+                  >
+                    <option value="operator">Operador</option>
+                    <option value="admin">Administrador</option>
+                    <option value="solicitante">Solicitante de soporte</option>
+                    <option value="dashboard">Dashboard (solo lectura)</option>
+                  </select>
+                </label>
+                <label *ngIf="nuevoUsuario().role === 'solicitante'"
+                  >Área del solicitante
+                  <select
+                    name="newArea"
+                    required
+                    [ngModel]="nuevoUsuario().areaId"
+                    (ngModelChange)="actualizarNuevoUsuario('areaId', $event)"
+                  >
+                    <option value="" disabled>Seleccioná el área</option>
+                    <option *ngFor="let area of authService.areas()" [value]="area.id">
+                      {{ area.nombre }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  type="submit"
+                  class="primary-button"
+                  [disabled]="
+                    nuevoUsuario().role === 'solicitante' && authService.areas().length === 0
+                  "
+                >
+                  Crear usuario
+                </button>
+              </form>
+              <div class="admin-user-list">
+                <article *ngFor="let usuario of authService.usuarios()">
+                  <div class="admin-user-details">
+                    <strong>{{ usuario.username }}</strong>
+                    <span>{{ nombreRol(usuario.role) }}</span>
+                    <span>{{ usuario.areaNombre || 'Sin área asignada' }}</span>
+                    <time>{{ usuario.createdAt | date: 'dd/MM/yyyy' }}</time>
+                  </div>
+                  <button
+                    type="button"
+                    class="secondary-button"
+                    *ngIf="usuarioParaRestablecer() !== usuario.id"
+                    (click)="usuarioParaRestablecer.set(usuario.id); nuevaContrasena.set('')"
+                  >
+                    Restablecer contraseña
+                  </button>
+                  <form
+                    *ngIf="usuarioParaRestablecer() === usuario.id"
+                    class="user-password-reset"
+                    (ngSubmit)="restablecerContrasena(usuario.id)"
+                  >
+                    <label>
+                      Nueva contraseña
+                      <input
+                        type="password"
+                        name="resetPassword-{{ usuario.id }}"
+                        required
+                        minlength="12"
+                        autocomplete="new-password"
+                        [ngModel]="nuevaContrasena()"
+                        (ngModelChange)="nuevaContrasena.set($event)"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      class="primary-button"
+                      [disabled]="usuarioRestableciendo() === usuario.id"
+                    >
+                      {{ usuarioRestableciendo() === usuario.id ? 'Guardando…' : 'Guardar' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="text-button"
+                      (click)="usuarioParaRestablecer.set(null); nuevaContrasena.set('')"
+                    >
+                      Cancelar
+                    </button>
+                  </form>
+                </article>
+              </div>
+            </section>
+            <section class="data-panel history-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>Actividad del inventario</h3>
+                  <p>Movimientos auditados más recientes</p>
+                </div>
+              </div>
+              <div *ngIf="historial().length === 0" class="empty-inline">
+                Todavía no hay movimientos para mostrar.
+              </div>
+              <article *ngFor="let movimiento of historial()" class="history-item">
+                <span
+                  class="movement-dot"
+                  [class.movement-success]="
+                    movimiento.tipo === 'INGRESO_STOCK' ||
+                    movimiento.tipo === 'ALTA_PUESTO' ||
+                    movimiento.tipo === 'ALTA_COMPONENTE'
+                  "
+                ></span>
+                <div>
+                  <strong>{{ movimiento.detalle }}</strong
+                  ><small>{{ movimiento.tipo }}</small>
+                </div>
+                <time>{{ movimiento.fecha | date: 'dd/MM/yyyy HH:mm' }}</time>
+              </article>
+            </section>
+          </main>
+          @defer (when vistaActiva() === 'PATRIMONIO') {
+            @if (vistaActiva() === 'PATRIMONIO') {
+              <app-asset-labels />
+            }
+          }
+        </ng-container>
       </div>
-      <button type="button" class="icon-button" aria-label="Cerrar formulario" (click)="cerrarModal()">×</button>
-    </header>
-    <p class="dialog-intro">{{ modalActivo() === 'NUEVO_COMPONENTE' ? 'Registrá manualmente el equipamiento existente. Esta acción no consulta ni modifica el stock de repuestos.' : 'Completá los datos para mantener el inventario actualizado.' }}</p>
-    <p *ngIf="errorFormulario()" class="inline-error" role="alert">{{ errorFormulario() }}</p>
-
-    <div *ngIf="modalActivo() === 'NUEVO_PUESTO'" class="form-fields">
-      <label>Piso
-        <select [ngModel]="pisoSeleccionadoFormPuesto()" (ngModelChange)="cambiarPisoFormularioPuesto($event)">
-          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
-        </select>
-      </label>
-      <label>Área
-        <select [(ngModel)]="nuevoPuesto.areaId" [disabled]="!pisoSeleccionadoFormPuesto()">
-          <option value="">Seleccionar área</option><option *ngFor="let area of areasFormPuesto()" [value]="area.id">{{ area.nombre }}</option>
-        </select>
-      </label>
-      <label class="field-full">Nombre del puesto<input [(ngModel)]="nuevoPuesto.nombrePuesto" placeholder="Ej. Puesto 3 · Cajas" /></label>
-      <label class="field-full">Usuario asignado<input [(ngModel)]="nuevoPuesto.usuarioAsignado" placeholder="Nombre y apellido" /></label>
-      <p *ngIf="pisos().length === 0" class="form-hint">Primero necesitás registrar un piso y un área.</p>
     </div>
-
-    <div *ngIf="modalActivo() === 'NUEVO_COMPONENTE'" class="form-fields">
-      <label>Tipo de componente
-        <select [ngModel]="nuevoComponenteManual().tipo" (ngModelChange)="actualizarTipoComponenteManual($event)">
-          <option *ngFor="let tipo of tiposComponentesPuesto" [ngValue]="tipo">{{ tipo }}</option>
-        </select>
-      </label>
-      <label>Marca
-        <input [ngModel]="nuevoComponenteManual().marca" (ngModelChange)="actualizarCampoComponenteManual('marca', $event)" placeholder="Ej. Dell" />
-      </label>
-      <label>Modelo
-        <input [ngModel]="nuevoComponenteManual().modelo" (ngModelChange)="actualizarCampoComponenteManual('modelo', $event)" placeholder="Ej. P2419H" />
-      </label>
-      <label>Características
-        <input [ngModel]="nuevoComponenteManual().caracteristicas" (ngModelChange)="actualizarCampoComponenteManual('caracteristicas', $event)" placeholder="N.º de serie, capacidad, pulgadas..." />
-      </label>
-      <p class="form-hint field-full" *ngIf="tipoComponenteManualExterno()">Se generará un código de seguimiento único para su etiqueta.</p>
-      <p class="form-hint field-full" *ngIf="!tipoComponenteManualExterno()">Los componentes internos se guardan sin código de seguimiento.</p>
-    </div>
-
-    <div *ngIf="modalActivo() === 'NUEVO_STOCK'" class="form-fields">
-      <label>Tipo de componente<select [(ngModel)]="nuevoStock.tipo"><option *ngFor="let tipo of tiposPerifericos" [ngValue]="tipo">{{ tipo }}</option></select></label>
-      <label class="field-full">Marca<input [(ngModel)]="nuevoStock.marca" placeholder="Ej. Kingston" /></label>
-      <label class="field-full">Especificación<input [(ngModel)]="nuevoStock.especificacion" placeholder="Ej. SSD 500GB NVMe" /></label>
-      <label>Cantidad a ingresar<input type="number" min="1" step="1" [(ngModel)]="nuevoStock.cantidadDisponible" /></label>
-      <label>Umbral de stock bajo<input type="number" min="0" step="1" [(ngModel)]="nuevoStock.stockMinimo" /></label>
-    </div>
-
-    <div *ngIf="modalActivo() === 'NUEVO_PISO'" class="form-fields">
-      <label>Nombre del piso<input [(ngModel)]="nuevoPiso.nombre" placeholder="Ej. Planta baja" /></label>
-      <label>Nivel<input type="number" [(ngModel)]="nuevoPiso.nivel" /></label>
-    </div>
-
-    <div *ngIf="modalActivo() === 'NUEVA_AREA'" class="form-fields">
-      <label>Piso
-        <select [ngModel]="pisoSeleccionadoEdificio()" (ngModelChange)="pisoSeleccionadoEdificio.set($event)">
-          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
-        </select>
-      </label>
-      <label>Nombre del área<input [(ngModel)]="nuevaArea.nombre" placeholder="Ej. Tesorería" /></label>
-    </div>
-
-    <div *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'" class="form-fields">
-      <label>Tipo de equipo<select [(ngModel)]="nuevoEquipoRed.tipo"><option *ngFor="let tipo of tiposEquipoRed" [ngValue]="tipo">{{ tipo }}</option></select></label>
-      <label>Piso
-        <select [ngModel]="pisoSeleccionadoFormEquipoRed()" (ngModelChange)="cambiarPisoFormularioEquipoRed($event)">
-          <option value="">Seleccionar piso</option><option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
-        </select>
-      </label>
-      <label>Área
-        <select [(ngModel)]="nuevoEquipoRed.areaId" [disabled]="!pisoSeleccionadoFormEquipoRed()">
-          <option value="">Seleccionar área</option><option *ngFor="let area of areasFormEquipoRed()" [value]="area.id">{{ area.nombre }}</option>
-        </select>
-      </label>
-      <label class="field-full">Marca<input [(ngModel)]="nuevoEquipoRed.marca" placeholder="Ej. Cisco" /></label>
-      <label class="field-full">Modelo<input [(ngModel)]="nuevoEquipoRed.modelo" placeholder="Ej. CBS110" /></label>
-    </div>
-
-    <footer class="dialog-actions">
-      <button type="button" class="secondary-button" (click)="cerrarModal()">Cancelar</button>
-      <button *ngIf="modalActivo() === 'NUEVO_PUESTO'" type="button" class="primary-button" (click)="guardarNuevoPuesto()">Guardar puesto</button>
-      <button *ngIf="modalActivo() === 'NUEVO_COMPONENTE'" type="button" class="primary-button" (click)="guardarComponenteManual()">Guardar componente</button>
-      <button *ngIf="modalActivo() === 'NUEVO_STOCK'" type="button" class="primary-button" (click)="guardarNuevoStock()">Agregar al stock</button>
-      <button *ngIf="modalActivo() === 'NUEVO_PISO'" type="button" class="primary-button" (click)="guardarPiso()">Crear piso</button>
-      <button *ngIf="modalActivo() === 'NUEVA_AREA'" type="button" class="primary-button" (click)="guardarArea()">Crear área</button>
-      <button *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'" type="button" class="primary-button" (click)="guardarEquipoRed()">Registrar equipo</button>
-    </footer>
-  </article>
-</section>
-
-<section *ngIf="confirmacionPendiente(); let confirmacion" class="modal-backdrop confirmation-backdrop" (click)="cancelarEliminacion()">
-  <article class="dialog confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" (click)="$event.stopPropagation()">
-    <span class="confirmation-icon">!</span>
-    <h2 id="confirm-title">¿Eliminar este registro?</h2>
-    <p><strong>{{ confirmacion.nombre }}</strong> se eliminará del inventario. Esta acción no se puede deshacer.</p>
-    <p *ngIf="confirmacion.tipo === 'PISO' || confirmacion.tipo === 'AREA'" class="form-hint">No se podrá eliminar si tiene elementos relacionados.</p>
-    <footer class="dialog-actions">
-      <button type="button" class="secondary-button" (click)="cancelarEliminacion()">Cancelar</button>
-      <button type="button" class="danger-button" (click)="confirmarEliminacion()">Eliminar</button>
-    </footer>
-  </article>
-</section>
-
-<div *ngIf="toast(); let mensaje" class="toast-notification" [class.toast-error]="mensaje.tipo === 'error'" role="status" aria-live="polite">
-  <span class="toast-icon">{{ mensaje.tipo === 'success' ? '✓' : '!' }}</span>
-  <span>{{ mensaje.mensaje }}</span>
-  <button type="button" class="toast-close" aria-label="Cerrar notificación" (click)="cerrarToast()">×</button>
-</div>
-
-<section *ngIf="puestoEtiquetas(); let puesto" class="print-sheet" aria-label="Etiquetas para imprimir">
-  <h1>Etiquetas · {{ puesto.nombrePuesto }}</h1>
-  <div class="print-label-grid">
-    <article class="asset-label qr-label">
-      <img #qrImage [src]="codigoQrPuesto()" [alt]="'Código QR del puesto ' + puesto.nombrePuesto" />
-      <div class="label-copy"><span>PUESTO DE TRABAJO</span><strong>{{ puesto.nombrePuesto }}</strong><small>{{ puesto.usuarioAsignado }} · {{ obtenerNombreArea(puesto.areaId) }}</small><code>{{ puesto.codigoSeguimiento }}</code></div>
-    </article>
-    <article *ngFor="let componente of componentesEtiquetas()" class="asset-label barcode-label">
-      <span class="label-type">{{ componente.tipo }}</span><strong>{{ componente.marca }} {{ componente.modelo || '' }} {{ componente.especificacion }}</strong>
-      <svg #barcodeSvg [attr.data-code]="componente.codigoSeguimiento" class="barcode-svg"></svg>
-      <code class="barcode-tracking-code">{{ componente.codigoSeguimiento }}</code>
-    </article>
   </div>
-  <p *ngIf="componentesEtiquetas().length === 0" class="print-empty-state">Este puesto no tiene periféricos externos con código de seguimiento para etiquetar.</p>
-</section>
+
+  <section *ngIf="modalActivo()" class="modal-backdrop" (click)="cerrarModal()">
+    <article
+      class="dialog form-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="form-dialog-title"
+      (click)="$event.stopPropagation()"
+    >
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow">NUEVO REGISTRO</span>
+          <h2 id="form-dialog-title">
+            {{
+              modalActivo() === 'NUEVO_PUESTO'
+                ? 'Registrar puesto'
+                : modalActivo() === 'NUEVO_COMPONENTE'
+                  ? 'Relevar componente instalado'
+                  : modalActivo() === 'NUEVO_STOCK'
+                    ? 'Ingresar stock'
+                    : modalActivo() === 'NUEVO_PISO'
+                      ? 'Crear piso'
+                      : modalActivo() === 'NUEVA_AREA'
+                        ? 'Crear área'
+                        : 'Registrar equipo de red'
+            }}
+          </h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Cerrar formulario"
+          (click)="cerrarModal()"
+        >
+          ×
+        </button>
+      </header>
+      <p class="dialog-intro">
+        {{
+          modalActivo() === 'NUEVO_COMPONENTE'
+            ? 'Registrá manualmente el equipamiento existente. Esta acción no consulta ni modifica el stock de repuestos.'
+            : 'Completá los datos para mantener el inventario actualizado.'
+        }}
+      </p>
+      <p *ngIf="errorFormulario()" class="inline-error" role="alert">{{ errorFormulario() }}</p>
+
+      <div *ngIf="modalActivo() === 'NUEVO_PUESTO'" class="form-fields">
+        <label
+          >Piso
+          <select
+            [ngModel]="pisoSeleccionadoFormPuesto()"
+            (ngModelChange)="cambiarPisoFormularioPuesto($event)"
+          >
+            <option value="">Seleccionar piso</option>
+            <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+          </select>
+        </label>
+        <label
+          >Área
+          <select [(ngModel)]="nuevoPuesto.areaId" [disabled]="!pisoSeleccionadoFormPuesto()">
+            <option value="">Seleccionar área</option>
+            <option *ngFor="let area of areasFormPuesto()" [value]="area.id">
+              {{ area.nombre }}
+            </option>
+          </select>
+        </label>
+        <label class="field-full"
+          >Nombre del puesto<input
+            [(ngModel)]="nuevoPuesto.nombrePuesto"
+            placeholder="Ej. Puesto 3 · Cajas"
+        /></label>
+        <label class="field-full"
+          >Usuario asignado<input
+            [(ngModel)]="nuevoPuesto.usuarioAsignado"
+            placeholder="Nombre y apellido"
+        /></label>
+        <p *ngIf="pisos().length === 0" class="form-hint">
+          Primero necesitás registrar un piso y un área.
+        </p>
+      </div>
+
+      <div *ngIf="modalActivo() === 'NUEVO_COMPONENTE'" class="form-fields">
+        <label
+          >Tipo de componente
+          <select
+            [ngModel]="nuevoComponenteManual().tipo"
+            (ngModelChange)="actualizarTipoComponenteManual($event)"
+          >
+            <option *ngFor="let tipo of tiposComponentesPuesto" [ngValue]="tipo">{{ tipo }}</option>
+          </select>
+        </label>
+        <label
+          >Marca
+          <input
+            [ngModel]="nuevoComponenteManual().marca"
+            (ngModelChange)="actualizarCampoComponenteManual('marca', $event)"
+            placeholder="Ej. Dell"
+          />
+        </label>
+        <label
+          >Modelo
+          <input
+            [ngModel]="nuevoComponenteManual().modelo"
+            (ngModelChange)="actualizarCampoComponenteManual('modelo', $event)"
+            placeholder="Ej. P2419H"
+          />
+        </label>
+        <label
+          >Características
+          <input
+            [ngModel]="nuevoComponenteManual().caracteristicas"
+            (ngModelChange)="actualizarCampoComponenteManual('caracteristicas', $event)"
+            placeholder="N.º de serie, capacidad, pulgadas..."
+          />
+        </label>
+        <p class="form-hint field-full" *ngIf="tipoComponenteManualExterno()">
+          Se generará un código de seguimiento único para su etiqueta.
+        </p>
+        <p class="form-hint field-full" *ngIf="!tipoComponenteManualExterno()">
+          Los componentes internos se guardan sin código de seguimiento.
+        </p>
+      </div>
+
+      <div *ngIf="modalActivo() === 'NUEVO_STOCK'" class="form-fields">
+        <label
+          >Tipo de componente<select [(ngModel)]="nuevoStock.tipo">
+            <option *ngFor="let tipo of tiposPerifericos" [ngValue]="tipo">{{ tipo }}</option>
+          </select></label
+        >
+        <label class="field-full"
+          >Marca<input [(ngModel)]="nuevoStock.marca" placeholder="Ej. Kingston"
+        /></label>
+        <label class="field-full"
+          >Especificación<input
+            [(ngModel)]="nuevoStock.especificacion"
+            placeholder="Ej. SSD 500GB NVMe"
+        /></label>
+        <label
+          >Cantidad a ingresar<input
+            type="number"
+            min="1"
+            step="1"
+            [(ngModel)]="nuevoStock.cantidadDisponible"
+        /></label>
+        <label
+          >Umbral de stock bajo<input
+            type="number"
+            min="0"
+            step="1"
+            [(ngModel)]="nuevoStock.stockMinimo"
+        /></label>
+      </div>
+
+      <div *ngIf="modalActivo() === 'NUEVO_PISO'" class="form-fields">
+        <label
+          >Nombre del piso<input [(ngModel)]="nuevoPiso.nombre" placeholder="Ej. Planta baja"
+        /></label>
+        <label>Nivel<input type="number" [(ngModel)]="nuevoPiso.nivel" /></label>
+      </div>
+
+      <div *ngIf="modalActivo() === 'NUEVA_AREA'" class="form-fields">
+        <label
+          >Piso
+          <select
+            [ngModel]="pisoSeleccionadoEdificio()"
+            (ngModelChange)="pisoSeleccionadoEdificio.set($event)"
+          >
+            <option value="">Seleccionar piso</option>
+            <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+          </select>
+        </label>
+        <label
+          >Nombre del área<input [(ngModel)]="nuevaArea.nombre" placeholder="Ej. Tesorería"
+        /></label>
+      </div>
+
+      <div *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'" class="form-fields">
+        <label
+          >Tipo de equipo<select [(ngModel)]="nuevoEquipoRed.tipo">
+            <option *ngFor="let tipo of tiposEquipoRed" [ngValue]="tipo">{{ tipo }}</option>
+          </select></label
+        >
+        <label
+          >Piso
+          <select
+            [ngModel]="pisoSeleccionadoFormEquipoRed()"
+            (ngModelChange)="cambiarPisoFormularioEquipoRed($event)"
+          >
+            <option value="">Seleccionar piso</option>
+            <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
+          </select>
+        </label>
+        <label
+          >Área
+          <select [(ngModel)]="nuevoEquipoRed.areaId" [disabled]="!pisoSeleccionadoFormEquipoRed()">
+            <option value="">Seleccionar área</option>
+            <option *ngFor="let area of areasFormEquipoRed()" [value]="area.id">
+              {{ area.nombre }}
+            </option>
+          </select>
+        </label>
+        <label class="field-full"
+          >Marca<input [(ngModel)]="nuevoEquipoRed.marca" placeholder="Ej. Cisco"
+        /></label>
+        <label class="field-full"
+          >Modelo<input [(ngModel)]="nuevoEquipoRed.modelo" placeholder="Ej. CBS110"
+        /></label>
+      </div>
+
+      <footer class="dialog-actions">
+        <button type="button" class="secondary-button" (click)="cerrarModal()">Cancelar</button>
+        <button
+          *ngIf="modalActivo() === 'NUEVO_PUESTO'"
+          type="button"
+          class="primary-button"
+          (click)="guardarNuevoPuesto()"
+        >
+          Guardar puesto
+        </button>
+        <button
+          *ngIf="modalActivo() === 'NUEVO_COMPONENTE'"
+          type="button"
+          class="primary-button"
+          (click)="guardarComponenteManual()"
+        >
+          Guardar componente
+        </button>
+        <button
+          *ngIf="modalActivo() === 'NUEVO_STOCK'"
+          type="button"
+          class="primary-button"
+          (click)="guardarNuevoStock()"
+        >
+          Agregar al stock
+        </button>
+        <button
+          *ngIf="modalActivo() === 'NUEVO_PISO'"
+          type="button"
+          class="primary-button"
+          (click)="guardarPiso()"
+        >
+          Crear piso
+        </button>
+        <button
+          *ngIf="modalActivo() === 'NUEVA_AREA'"
+          type="button"
+          class="primary-button"
+          (click)="guardarArea()"
+        >
+          Crear área
+        </button>
+        <button
+          *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'"
+          type="button"
+          class="primary-button"
+          (click)="guardarEquipoRed()"
+        >
+          Registrar equipo
+        </button>
+      </footer>
+    </article>
+  </section>
+
+  <section
+    *ngIf="reemplazoModalAbierto()"
+    class="modal-backdrop replacement-backdrop"
+    (click)="cerrarReemplazo()"
+  >
+    <article
+      class="dialog replacement-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="replacement-dialog-title"
+      (click)="$event.stopPropagation()"
+    >
+      <header class="dialog-header replacement-header">
+        <div>
+          <span class="eyebrow">MOVIMIENTO DE INVENTARIO</span>
+          <h2 id="replacement-dialog-title">Reemplazar equipo</h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Cerrar reemplazo"
+          [disabled]="reemplazoGuardando()"
+          (click)="cerrarReemplazo()"
+        >
+          ×
+        </button>
+      </header>
+
+      <p *ngIf="reemplazoPuesto(); let puesto" class="dialog-intro">
+        Puesto: <strong>{{ puesto.nombrePuesto }}</strong> · {{ puesto.usuarioAsignado }} ·
+        {{ obtenerNombreAreaPiso(puesto.areaId) }}
+      </p>
+
+      <div class="replacement-cards">
+        <section class="replacement-card outgoing-card">
+          <div class="replacement-card-heading">
+            <span class="replacement-step outgoing-step">1</span>
+            <div>
+              <span class="replacement-label">EQUIPO SALIENTE</span>
+              <h3>Equipo que se retira</h3>
+            </div>
+          </div>
+          <label>
+            <span>Seleccioná el componente instalado</span>
+            <select
+              [ngModel]="reemplazoComponenteId()"
+              (ngModelChange)="
+                reemplazoComponenteId.set($event);
+                reemplazoConfirmado.set(false);
+                reemplazoError.set('')
+              "
+            >
+              <option value="">Elegir equipo saliente</option>
+              <option *ngFor="let componente of componentesDelReemplazo()" [value]="componente.id">
+                {{ componente.tipo }} · {{ componente.marca }}
+                {{ componente.modelo || '' }} · {{ componente.especificacion }}
+              </option>
+            </select>
+          </label>
+          <div *ngIf="componenteSaliente(); let componente; else sinComponenteSeleccionado" class="replacement-asset">
+            <span class="replacement-type">{{ componente.tipo }}</span>
+            <strong>{{ componente.marca }} {{ componente.modelo || '' }}</strong>
+            <span>{{ componente.especificacion }}</span>
+            <code *ngIf="componente.numeroSerie">S/N {{ componente.numeroSerie }}</code>
+            <code *ngIf="componente.codigoSeguimiento">
+              Código {{ componente.codigoSeguimiento }}
+            </code>
+          </div>
+          <ng-template #sinComponenteSeleccionado>
+            <p class="replacement-placeholder">Seleccioná un equipo para revisar sus datos.</p>
+          </ng-template>
+          <label>
+            <span>Motivo del reemplazo</span>
+            <select
+              [ngModel]="reemplazoMotivoTipo()"
+              (ngModelChange)="
+                reemplazoMotivoTipo.set($event);
+                reemplazoConfirmado.set(false);
+                reemplazoError.set('')
+              "
+            >
+              <option *ngFor="let motivo of motivosReemplazo" [value]="motivo">
+                {{ motivo }}
+              </option>
+            </select>
+          </label>
+          <label>
+            <span>Detalle {{ reemplazoMotivoTipo() === 'Otro' ? '(obligatorio)' : '(opcional)' }}</span>
+            <textarea
+              rows="2"
+              maxlength="450"
+              placeholder="Describí brevemente el motivo"
+              [required]="reemplazoMotivoTipo() === 'Otro'"
+              [ngModel]="reemplazoMotivoDetalle()"
+              (ngModelChange)="
+                reemplazoMotivoDetalle.set($event);
+                reemplazoConfirmado.set(false);
+                reemplazoError.set('')
+              "
+            ></textarea>
+          </label>
+        </section>
+
+        <section class="replacement-card incoming-card">
+          <div class="replacement-card-heading">
+            <span class="replacement-step incoming-step">2</span>
+            <div>
+              <span class="replacement-label">EQUIPO ENTRANTE</span>
+              <h3>Equipo nuevo desde stock</h3>
+            </div>
+          </div>
+          <label>
+            <span>Buscá por tipo, marca o especificación</span>
+            <input
+              type="search"
+              list="replacement-stock-options"
+              autocomplete="off"
+              placeholder="Escribí para buscar en el stock disponible…"
+              [ngModel]="reemplazoStockBusqueda()"
+              (ngModelChange)="seleccionarStockReemplazo($event)"
+            />
+            <datalist id="replacement-stock-options">
+              <option
+                *ngFor="let opcion of opcionesStockReemplazo()"
+                [value]="opcion.label"
+              ></option>
+            </datalist>
+          </label>
+          <div
+            *ngIf="insumoEntrante(); let insumo; else sinStockSeleccionado"
+            class="replacement-asset"
+          >
+            <span class="replacement-type">{{ insumo.tipo }}</span>
+            <strong>{{ insumo.marca }}</strong>
+            <span>{{ insumo.especificacion }}</span>
+            <span class="replacement-quantity"
+              >{{ insumo.cantidadDisponible }} unidades disponibles</span
+            >
+          </div>
+          <ng-template #sinStockSeleccionado>
+            <p class="replacement-placeholder">
+              @if (opcionesStockReemplazo().length === 0) {
+                No hay equipos disponibles en stock.
+              } @else {
+                Elegí una opción de la lista para revisar el equipo y las existencias.
+              }
+            </p>
+          </ng-template>
+        </section>
+      </div>
+
+      <div
+        *ngIf="componenteSaliente() && insumoEntrante()"
+        class="replacement-summary"
+        aria-live="polite"
+      >
+        <strong>Confirmación del movimiento</strong>
+        <p>
+          Se retirará <b>{{ componenteSaliente()?.tipo }} · {{ componenteSaliente()?.marca }}</b>
+          del puesto y se instalará
+          <b>{{ insumoEntrante()?.tipo }} · {{ insumoEntrante()?.marca }}</b>.
+          El stock de este último disminuirá en una unidad.
+        </p>
+        <p>Motivo registrado: <strong>{{ motivoReemplazo() }}</strong></p>
+      </div>
+
+      <label class="replacement-confirmation">
+        <input
+          type="checkbox"
+          [checked]="reemplazoConfirmado()"
+          (change)="actualizarConfirmacionReemplazo($event)"
+        />
+        <span>Revisé el equipo saliente, el entrante, el motivo y el cambio de stock.</span>
+      </label>
+
+      <p *ngIf="reemplazoError()" class="inline-error" role="alert">
+        {{ reemplazoError() }}
+      </p>
+
+      <footer class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="reemplazoGuardando()"
+          (click)="cerrarReemplazo()"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          class="primary-button replacement-submit"
+          [disabled]="
+            reemplazoGuardando() ||
+            !componenteSaliente() ||
+            !insumoEntrante() ||
+            !reemplazoConfirmado() ||
+            (reemplazoMotivoTipo() === 'Otro' && !reemplazoMotivoDetalle().trim())
+          "
+          (click)="ejecutarReemplazo()"
+        >
+          {{ reemplazoGuardando() ? 'Guardando…' : 'Confirmar reemplazo' }}
+        </button>
+      </footer>
+    </article>
+  </section>
+
+  <section
+    *ngIf="confirmacionPendiente(); let confirmacion"
+    class="modal-backdrop confirmation-backdrop"
+    (click)="cancelarEliminacion()"
+  >
+    <article
+      class="dialog confirmation-dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+      (click)="$event.stopPropagation()"
+    >
+      <span class="confirmation-icon">!</span>
+      <h2 id="confirm-title">¿Eliminar este registro?</h2>
+      <p>
+        <strong>{{ confirmacion.nombre }}</strong> se eliminará del inventario. Esta acción no se
+        puede deshacer.
+      </p>
+      <p *ngIf="confirmacion.tipo === 'PISO' || confirmacion.tipo === 'AREA'" class="form-hint">
+        No se podrá eliminar si tiene elementos relacionados.
+      </p>
+      <footer class="dialog-actions">
+        <button type="button" class="secondary-button" (click)="cancelarEliminacion()">
+          Cancelar
+        </button>
+        <button type="button" class="danger-button" (click)="confirmarEliminacion()">
+          Eliminar
+        </button>
+      </footer>
+    </article>
+  </section>
+
+  <div
+    *ngIf="toast(); let mensaje"
+    class="toast-notification"
+    [class.toast-error]="mensaje.tipo === 'error'"
+    role="status"
+    aria-live="polite"
+  >
+    <span class="toast-icon">{{ mensaje.tipo === 'success' ? '✓' : '!' }}</span>
+    <span>{{ mensaje.mensaje }}</span>
+    <button
+      type="button"
+      class="toast-close"
+      aria-label="Cerrar notificación"
+      (click)="cerrarToast()"
+    >
+      ×
+    </button>
+  </div>
+
+  <section
+    *ngIf="puestoEtiquetas(); let puesto"
+    class="print-sheet"
+    aria-label="Etiquetas para imprimir"
+  >
+    <h1>Etiquetas · {{ puesto.nombrePuesto }}</h1>
+    <div class="print-label-grid">
+      <article class="asset-label qr-label">
+        <img
+          #qrImage
+          [src]="codigoQrPuesto()"
+          [alt]="'Código QR del puesto ' + puesto.nombrePuesto"
+        />
+        <div class="label-copy">
+          <span>PUESTO DE TRABAJO</span><strong>{{ puesto.nombrePuesto }}</strong
+          ><small>{{ puesto.usuarioAsignado }} · {{ obtenerNombreArea(puesto.areaId) }}</small
+          ><code>{{ puesto.codigoSeguimiento }}</code>
+        </div>
+      </article>
+      <article *ngFor="let componente of componentesEtiquetas()" class="asset-label barcode-label">
+        <span class="label-type">{{ componente.tipo }}</span
+        ><strong
+          >{{ componente.marca }} {{ componente.modelo || '' }}
+          {{ componente.especificacion }}</strong
+        >
+        <svg #barcodeSvg [attr.data-code]="componente.codigoSeguimiento" class="barcode-svg"></svg>
+        <code class="barcode-tracking-code">{{ componente.codigoSeguimiento }}</code>
+      </article>
+    </div>
+    <p *ngIf="componentesEtiquetas().length === 0" class="print-empty-state">
+      Este puesto no tiene periféricos externos con código de seguimiento para etiquetar.
+    </p>
+  </section>
 </ng-container>
 
 <section *ngIf="!authService.initialized()" class="auth-screen" aria-live="polite">
-  <article class="auth-card"><span class="eyebrow">DOSEP · GESTIÓN IT</span><h1>Conectando con el servidor</h1><p>Verificando el acceso al inventario.</p></article>
+  <article class="auth-card">
+    <span class="eyebrow">DOSEP · GESTIÓN IT</span>
+    <h1>Conectando con el servidor</h1>
+    <p>Verificando el acceso al inventario.</p>
+  </article>
 </section>
 
 <section *ngIf="authService.initialized() && !authService.user()" class="auth-screen">
@@ -639,25 +1605,80 @@
     <img class="auth-logo" src="/logos/dosep.png" width="1024" height="235" alt="DOSEP" />
     <span class="eyebrow">GESTIÓN DE PARQUE IT</span>
     <h1>{{ authService.setupRequired() ? 'Configurar administrador' : 'Iniciar sesión' }}</h1>
-    <p>{{ authService.setupRequired() ? 'Creá la primera cuenta administradora para este servidor.' : 'Ingresá con tu cuenta institucional de Gestión IT.' }}</p>
-    <label>Usuario
-      <input name="username" autocomplete="username" required minlength="3" [ngModel]="authUsuario()" (ngModelChange)="authUsuario.set($event)" />
+    <p>
+      {{
+        authService.setupRequired()
+          ? 'Creá la primera cuenta administradora para este servidor.'
+          : 'Ingresá con tu cuenta institucional de Gestión IT.'
+      }}
+    </p>
+    <label
+      >Usuario
+      <input
+        name="username"
+        autocomplete="username"
+        required
+        minlength="3"
+        [ngModel]="authUsuario()"
+        (ngModelChange)="authUsuario.set($event)"
+      />
     </label>
-    <label>Contraseña
-      <input name="password" type="password" [attr.autocomplete]="authService.setupRequired() ? 'new-password' : 'current-password'" [attr.minlength]="authService.setupRequired() ? 12 : 1" required [ngModel]="authContrasena()" (ngModelChange)="authContrasena.set($event)" />
+    <label
+      >Contraseña
+      <input
+        name="password"
+        type="password"
+        [attr.autocomplete]="authService.setupRequired() ? 'new-password' : 'current-password'"
+        [attr.minlength]="authService.setupRequired() ? 12 : 1"
+        required
+        [ngModel]="authContrasena()"
+        (ngModelChange)="authContrasena.set($event)"
+      />
     </label>
     <p *ngIf="authService.error()" class="inline-error" role="alert">{{ authService.error() }}</p>
-    <button *ngIf="authService.error()" type="button" class="text-button auth-retry" (click)="reintentarConexion()">Reintentar conexión</button>
+    <button
+      *ngIf="authService.error()"
+      type="button"
+      class="text-button auth-retry"
+      (click)="reintentarConexion()"
+    >
+      Reintentar conexión
+    </button>
     <button type="submit" class="primary-button" [disabled]="authService.pending()">
-      {{ authService.pending() ? 'Conectando…' : authService.setupRequired() ? 'Crear administrador' : 'Ingresar' }}
+      {{
+        authService.pending()
+          ? 'Conectando…'
+          : authService.setupRequired()
+            ? 'Crear administrador'
+            : 'Ingresar'
+      }}
     </button>
   </form>
 </section>
 
-<section *ngIf="authService.user() && inventoryService.cargando()" class="auth-screen" aria-live="polite">
-  <article class="auth-card"><span class="eyebrow">DOSEP · GESTIÓN IT</span><h1>Cargando inventario</h1><p>Consultando los datos compartidos del servidor.</p></article>
+<section
+  *ngIf="authService.user() && inventoryService.cargando()"
+  class="auth-screen"
+  aria-live="polite"
+>
+  <article class="auth-card">
+    <span class="eyebrow">DOSEP · GESTIÓN IT</span>
+    <h1>Cargando inventario</h1>
+    <p>Consultando los datos compartidos del servidor.</p>
+  </article>
 </section>
 
-<section *ngIf="authService.user() && inventoryService.errorCarga() && !inventoryService.cargando()" class="auth-screen">
-  <article class="auth-card"><span class="eyebrow">SERVIDOR NO DISPONIBLE</span><h1>No se pudo cargar el inventario</h1><p class="inline-error" role="alert">{{ inventoryService.errorCarga() }}</p><button type="button" class="primary-button" (click)="reintentarConexion()">Reintentar</button><button type="button" class="text-button auth-retry" (click)="cerrarSesion()">Cerrar sesión</button></article>
+<section
+  *ngIf="authService.user() && inventoryService.errorCarga() && !inventoryService.cargando()"
+  class="auth-screen"
+>
+  <article class="auth-card">
+    <span class="eyebrow">SERVIDOR NO DISPONIBLE</span>
+    <h1>No se pudo cargar el inventario</h1>
+    <p class="inline-error" role="alert">{{ inventoryService.errorCarga() }}</p>
+    <button type="button" class="primary-button" (click)="reintentarConexion()">Reintentar</button
+    ><button type="button" class="text-button auth-retry" (click)="cerrarSesion()">
+      Cerrar sesión
+    </button>
+  </article>
 </section>

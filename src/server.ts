@@ -8,7 +8,9 @@ import {
 import express from 'express';
 import { join } from 'node:path';
 import { createDatabasePool, verifyDatabase } from './server/database';
+import { createHardwareAssetsApi } from './server/hardware-assets-api';
 import { createInventoryApi } from './server/inventory-api';
+import { createTicketsApi } from './server/tickets-api';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
@@ -21,6 +23,8 @@ app.use(
   '/api',
   createInventoryApi(databasePool, process.env['SESSION_SECRET'] ?? ''),
 );
+app.use('/api', createTicketsApi(databasePool));
+app.use('/api', createHardwareAssetsApi(databasePool));
 
 /**
  * Serve static files from /browser

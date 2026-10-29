@@ -1,0 +1,133 @@
+<section class="explorer-panel" aria-labelledby="area-explorer-title">
+  <header class="explorer-heading">
+    <div>
+      <span class="eyebrow">MAPA DE ACTIVOS</span>
+      <h3 id="area-explorer-title">Explorar equipos y reclamos por área</h3>
+      <p>Seleccioná un piso y un área para consultar sus activos y solicitudes de soporte.</p>
+    </div>
+    @if (areaSeleccionada()) {
+      <span class="asset-count">{{ cantidadEquipos() }} equipos</span>
+    }
+  </header>
+
+  <div class="explorer-filters">
+    <label>
+      <span>Piso</span>
+      <select [ngModel]="pisoSeleccionadoId()" (ngModelChange)="seleccionarPiso($event)">
+        <option value="">Seleccionar piso</option>
+        @for (piso of pisos(); track piso.id) {
+          <option [value]="piso.id">{{ piso.nombre }} · Nivel {{ piso.nivel }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      <span>Área</span>
+      <select
+        [ngModel]="areaSeleccionadaId()"
+        [disabled]="!pisoSeleccionadoId()"
+        (ngModelChange)="seleccionarArea($event)"
+      >
+        <option value="">Seleccionar área</option>
+        @for (area of areasDelPiso(); track area.id) {
+          <option [value]="area.id">{{ area.nombre }}</option>
+        }
+      </select>
+    </label>
+  </div>
+
+  @if (error()) {
+    <p class="explorer-feedback explorer-error" role="alert">{{ error() }}</p>
+  }
+
+  @if (!pisoSeleccionadoId()) {
+    <p class="explorer-feedback">Elegí un piso para comenzar a explorar.</p>
+  } @else if (areasDelPiso().length === 0) {
+    <p class="explorer-feedback">Este piso todavía no tiene áreas registradas.</p>
+  } @else if (areaSeleccionada()) {
+    <div class="area-overview">
+      <h4>{{ areaSeleccionada()?.nombre }}</h4>
+      <div class="asset-groups">
+        <section class="asset-group">
+          <header>
+            <h4>Puestos de trabajo</h4>
+            <span>{{ puestosDelArea().length }}</span>
+          </header>
+          @for (puesto of puestosDelArea(); track puesto.id) {
+            <article class="asset-card">
+              <div>
+                <strong>{{ puesto.nombrePuesto }}</strong>
+                <small>{{ puesto.usuarioAsignado || 'Sin usuario asignado' }}</small>
+              </div>
+              @if (puesto.componentes.length === 0) {
+                <p class="asset-empty">Sin componentes relevados.</p>
+              } @else {
+                <ul>
+                  @for (componente of puesto.componentes; track componente.id) {
+                    <li>
+                      <span>{{ componente.tipo }}</span>
+                      <span
+                        >{{ componente.marca }} {{ componente.modelo }}
+                        {{ componente.especificacion }}</span
+                      >
+                    </li>
+                  }
+                </ul>
+              }
+            </article>
+          } @empty {
+            <p class="asset-empty">No hay puestos asignados a esta área.</p>
+          }
+        </section>
+
+        <section class="asset-group">
+          <header>
+            <h4>Equipos de red</h4>
+            <span>{{ equiposRedDelArea().length }}</span>
+          </header>
+          @for (equipo of equiposRedDelArea(); track equipo.id) {
+            <article class="asset-card">
+              <div>
+                <strong>{{ equipo.tipo }} · {{ equipo.marca }}</strong>
+                <small>{{ equipo.modelo }}</small>
+              </div>
+              <small class="tracking-code">{{ equipo.codigoSeguimiento }}</small>
+            </article>
+          } @empty {
+            <p class="asset-empty">No hay equipos de red asignados a esta área.</p>
+          }
+        </section>
+      </div>
+    </div>
+
+    <section class="area-ticket-history" aria-labelledby="area-ticket-history-title">
+      <header>
+        <div>
+          <h4 id="area-ticket-history-title">Historial de reclamos</h4>
+          <p>Solicitudes de soporte registradas para esta área.</p>
+        </div>
+        <span>{{ tickets().length }} reclamos</span>
+      </header>
+      @if (loadingTickets()) {
+        <p class="explorer-feedback" role="status">Cargando reclamos del área…</p>
+      } @else if (tickets().length === 0) {
+        <p class="explorer-feedback">Esta área todavía no tiene reclamos.</p>
+      } @else {
+        <ol class="ticket-history-list">
+          @for (ticket of tickets(); track ticket.id) {
+            <li class="ticket-history-item">
+              <div>
+                <span class="ticket-status" [class]="ticket.estado.toLowerCase().replace(' ', '-')">
+                  {{ ticket.estado }}
+                </span>
+                <strong>{{ ticket.titulo }}</strong>
+                <small>{{ ticket.categoria }} · {{ ticket.usuario_nombre }}</small>
+              </div>
+              <time>{{ ticket.fecha_creacion | date: 'dd/MM/yyyy HH:mm' }}</time>
+              <p>{{ ticket.descripcion }}</p>
+            </li>
+          }
+        </ol>
+      }
+    </section>
+  }
+</section>

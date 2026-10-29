@@ -13,8 +13,19 @@ import {
 import { CommonModule, NgOptimizedImage } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { InventoryService } from './services/inventory.service';
-import { AuthService } from './services/auth.service';
-import { EquipoRed, EstadoComponenteRetirado, PuestoTrabajo, TipoEquipoRed, TipoPeriferico } from './models/inventory.model';
+import { AuthService, type SystemRole } from './services/auth.service';
+import { AssetLabelsComponent } from './components/asset-labels/asset-labels.component';
+import { AreaAssetsExplorerComponent } from './components/area-assets-explorer/area-assets-explorer.component';
+import { SupportTicketsComponent } from './components/support-tickets/support-tickets.component';
+import { ReadOnlyDashboardComponent } from './components/read-only-dashboard/read-only-dashboard.component';
+import {
+  EquipoRed,
+  EstadoComponenteRetirado,
+  PuestoTrabajo,
+  StockInsumo,
+  TipoEquipoRed,
+  TipoPeriferico,
+} from './models/inventory.model';
 import type { WorkSheet } from 'xlsx-js-style';
 
 type ModalActivo =
@@ -26,7 +37,8 @@ type ModalActivo =
   | 'NUEVO_EQUIPO_RED'
   | null;
 
-type VistaActiva = 'PARQUE' | 'STOCK' | 'EDIFICIO' | 'REPORTES' | 'REDES' | 'TALLER';
+type VistaActiva =
+  'PARQUE' | 'STOCK' | 'EDIFICIO' | 'REPORTES' | 'REDES' | 'TALLER' | 'PATRIMONIO' | 'TICKETS';
 
 type TipoConfirmacion = 'PUESTO' | 'STOCK' | 'PISO' | 'AREA' | 'RED';
 
@@ -44,8 +56,16 @@ interface ToastNotification {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgOptimizedImage],
-  templateUrl: './app.html'
+  imports: [
+    CommonModule,
+    FormsModule,
+    NgOptimizedImage,
+    AssetLabelsComponent,
+    AreaAssetsExplorerComponent,
+    SupportTicketsComponent,
+    ReadOnlyDashboardComponent,
+  ],
+  templateUrl: './app.html',
 })
 export class App implements OnDestroy {
   inventoryService = inject(InventoryService);
@@ -58,8 +78,12 @@ export class App implements OnDestroy {
   readonly nuevoUsuario = signal({
     username: '',
     password: '',
-    role: 'operator' as 'admin' | 'operator',
+    role: 'operator' as SystemRole,
+    areaId: '',
   });
+  readonly usuarioParaRestablecer = signal<string | null>(null);
+  readonly nuevaContrasena = signal('');
+  readonly usuarioRestableciendo = signal<string | null>(null);
 
   constructor() {
     void this.inicializarSesion();
@@ -67,7 +91,10 @@ export class App implements OnDestroy {
 
   private async inicializarSesion(): Promise<void> {
     await this.authService.initialize();
-    if (this.authService.user()) {
+    const user = this.authService.user();
+    if (user?.role === 'solicitante') {
+      this.vistaActiva.set('TICKETS');
+    } else if (user) {
       await this.cargarInventario();
     }
   }
@@ -90,7 +117,11 @@ export class App implements OnDestroy {
         await this.authService.iniciarSesion(username, password);
       }
       this.authContrasena.set('');
-      await this.cargarInventario();
+      if (this.authService.user()?.role === 'solicitante') {
+        this.vistaActiva.set('TICKETS');
+      } else {
+        await this.cargarInventario();
+      }
     } catch {
       // AuthService and InventoryService expose actionable errors to the template.
     }
@@ -161,10 +192,52 @@ export class App implements OnDestroy {
       REPORTES: 'Reportes e Historial',
       REDES: 'Gestión de Redes',
       TALLER: 'Taller y Scrap',
+      PATRIMONIO: 'Etiquetas de patrimonio',
+      TICKETS: 'Reclamos de soporte',
     };
     return titulos[this.vistaActiva()];
   });
   readonly modalActivo = signal<ModalActivo>(null);
+  readonly reemplazoModalAbierto = signal(false);
+  readonly reemplazoGuardando = signal(false);
+  readonly reemplazoError = signal('');
+  readonly reemplazoConfirmado = signal(false);
+  readonly reemplazoPuestoId = signal('');
+  readonly reemplazoComponenteId = signal('');
+  readonly reemplazoStockId = signal('');
+  readonly reemplazoStockBusqueda = signal('');
+  readonly reemplazoMotivoTipo = signal('Falla');
+  readonly reemplazoMotivoDetalle = signal('');
+  readonly motivosReemplazo = ['Falla', 'Obsolescencia', 'Mejora', 'Otro'] as const;
+  readonly reemplazoPuesto = computed(
+    () => this.puestos().find((puesto) => puesto.id === this.reemplazoPuestoId()) ?? null,
+  );
+  readonly componentesDelReemplazo = computed(
+    () => this.reemplazoPuesto()?.componentes ?? [],
+  );
+  readonly componenteSaliente = computed(
+    () =>
+      this.componentesDelReemplazo().find(
+        (componente) => componente.id === this.reemplazoComponenteId(),
+      ) ?? null,
+  );
+  readonly opcionesStockReemplazo = computed(() =>
+    this.stock()
+      .filter((insumo) => insumo.cantidadDisponible > 0)
+      .map((insumo, index) => ({
+        id: insumo.id,
+        label: this.etiquetaStockReemplazo(insumo, index),
+      })),
+  );
+  readonly insumoEntrante = computed(() => {
+    const insumo = this.stock().find((item) => item.id === this.reemplazoStockId());
+    return insumo && insumo.cantidadDisponible > 0 ? insumo : null;
+  });
+  readonly motivoReemplazo = computed(() => {
+    const tipo = this.reemplazoMotivoTipo();
+    const detalle = this.reemplazoMotivoDetalle().trim();
+    return detalle ? `${tipo}: ${detalle}` : tipo;
+  });
   readonly errorFormulario = signal('');
   readonly toast = signal<ToastNotification | null>(null);
   readonly confirmacionPendiente = signal<ConfirmacionPendiente | null>(null);
@@ -188,8 +261,15 @@ export class App implements OnDestroy {
   equiposRed = this.inventoryService.equiposRed;
   componentesRetirados = this.inventoryService.componentesRetirados;
   readonly inventarioVacio = computed(() =>
-    [this.pisos(), this.areas(), this.stock(), this.puestos(), this.equiposRed(),
-      this.componentesRetirados(), this.historial()].every((coleccion) => coleccion.length === 0),
+    [
+      this.pisos(),
+      this.areas(),
+      this.stock(),
+      this.puestos(),
+      this.equiposRed(),
+      this.componentesRetirados(),
+      this.historial(),
+    ].every((coleccion) => coleccion.length === 0),
   );
 
   // Filtros parque
@@ -212,13 +292,13 @@ export class App implements OnDestroy {
     marca: '',
     especificacion: '',
     cantidadDisponible: 1,
-    stockMinimo: 2
+    stockMinimo: 2,
   };
 
   nuevoPuesto = {
     areaId: '',
     nombrePuesto: '',
-    usuarioAsignado: ''
+    usuarioAsignado: '',
   };
   readonly pisoSeleccionadoFormPuesto = signal('');
   readonly areasFormPuesto = computed(() => {
@@ -281,8 +361,7 @@ export class App implements OnDestroy {
     () =>
       this.puestoEtiquetas()?.componentes.filter(
         (componente) =>
-          this.tiposPerifericosExternos.includes(componente.tipo) &&
-          !!componente.codigoSeguimiento,
+          this.tiposPerifericosExternos.includes(componente.tipo) && !!componente.codigoSeguimiento,
       ) ?? [],
   );
   readonly codigoQrPuesto = signal('');
@@ -292,15 +371,23 @@ export class App implements OnDestroy {
   @ViewChildren('barcodeSvg') private barcodeSvgs!: QueryList<ElementRef<SVGSVGElement>>;
 
   tiposPerifericos: TipoPeriferico[] = [
-    'PROCESADOR', 'RAM', 'DISCO_HDD', 'DISCO_SSD',
-    'MONITOR', 'TECLADO', 'MOUSE', 'SCANNER', 'IMPRESORA', 'OTRO'
+    'PROCESADOR',
+    'RAM',
+    'DISCO_HDD',
+    'DISCO_SSD',
+    'MONITOR',
+    'TECLADO',
+    'MOUSE',
+    'SCANNER',
+    'IMPRESORA',
+    'OTRO',
   ];
 
   // Filtros dinámicos
   areasFiltradas = computed(() => {
     const pisoId = this.pisoSeleccionadoId();
     if (pisoId === 'TODOS') return this.areas();
-    return this.areas().filter(a => a.pisoId === pisoId);
+    return this.areas().filter((a) => a.pisoId === pisoId);
   });
 
   puestosFiltrados = computed(() => {
@@ -309,23 +396,27 @@ export class App implements OnDestroy {
     const areaId = this.areaSeleccionadaId();
 
     if (pisoId !== 'TODOS') {
-      const idsAreasDelPiso = this.areas().filter(a => a.pisoId === pisoId).map(a => a.id);
-      resultado = resultado.filter(p => idsAreasDelPiso.includes(p.areaId));
+      const idsAreasDelPiso = this.areas()
+        .filter((a) => a.pisoId === pisoId)
+        .map((a) => a.id);
+      resultado = resultado.filter((p) => idsAreasDelPiso.includes(p.areaId));
     }
 
     if (areaId !== 'TODAS') {
-      resultado = resultado.filter(p => p.areaId === areaId);
+      resultado = resultado.filter((p) => p.areaId === areaId);
     }
 
     const consulta = this.normalizarBusqueda(this.busquedaParque());
     if (consulta) {
-      resultado = resultado.filter((puesto) =>
-        this.normalizarBusqueda(puesto.usuarioAsignado).includes(consulta) ||
-        puesto.componentes.some((componente) =>
-          this.normalizarBusqueda(componente.marca).includes(consulta) ||
-          this.normalizarBusqueda(componente.modelo ?? '').includes(consulta) ||
-          this.normalizarBusqueda(componente.numeroSerie ?? '').includes(consulta)
-        )
+      resultado = resultado.filter(
+        (puesto) =>
+          this.normalizarBusqueda(puesto.usuarioAsignado).includes(consulta) ||
+          puesto.componentes.some(
+            (componente) =>
+              this.normalizarBusqueda(componente.marca).includes(consulta) ||
+              this.normalizarBusqueda(componente.modelo ?? '').includes(consulta) ||
+              this.normalizarBusqueda(componente.numeroSerie ?? '').includes(consulta),
+          ),
       );
     }
 
@@ -345,14 +436,14 @@ export class App implements OnDestroy {
   }
 
   obtenerNombreAreaPiso(areaId: string): string {
-    const area = this.areas().find(a => a.id === areaId);
+    const area = this.areas().find((a) => a.id === areaId);
     if (!area) return 'Área no asignada';
-    const piso = this.pisos().find(p => p.id === area.pisoId);
+    const piso = this.pisos().find((p) => p.id === area.pisoId);
     return `${area.nombre} — (${piso ? piso.nombre : 'Sin piso'})`;
   }
 
   obtenerNombrePiso(pisoId: string): string {
-    const piso = this.pisos().find(p => p.id === pisoId);
+    const piso = this.pisos().find((p) => p.id === pisoId);
     return piso ? piso.nombre : 'Desconocido';
   }
 
@@ -373,6 +464,10 @@ export class App implements OnDestroy {
   }
 
   cambiarVista(vista: VistaActiva): void {
+    const role = this.authService.user()?.role;
+    if (role === 'solicitante' && vista !== 'TICKETS') return;
+    if (role === 'dashboard') return;
+    if (vista === 'PATRIMONIO' && role !== 'admin' && role !== 'operator') return;
     this.vistaActiva.set(vista);
     this.menuMovilAbierto.set(false);
     if (vista === 'REPORTES' && this.authService.user()?.role === 'admin') {
@@ -382,9 +477,12 @@ export class App implements OnDestroy {
 
   private async cargarUsuarios(): Promise<void> {
     try {
-      await this.authService.cargarUsuarios();
+      await Promise.all([this.authService.cargarUsuarios(), this.authService.cargarAreas()]);
     } catch (error: unknown) {
-      this.mostrarToast(error instanceof Error ? error.message : 'No se pudieron cargar los usuarios.', 'error');
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudieron cargar los usuarios.',
+        'error',
+      );
     }
   }
 
@@ -399,17 +497,62 @@ export class App implements OnDestroy {
         usuario.username.trim(),
         usuario.password,
         usuario.role,
+        usuario.role === 'solicitante' ? usuario.areaId || null : null,
       );
-      this.nuevoUsuario.set({ username: '', password: '', role: 'operator' });
+      this.nuevoUsuario.set({ username: '', password: '', role: 'operator', areaId: '' });
       this.mostrarToast('Se creó la cuenta de usuario.');
     } catch (error: unknown) {
-      this.mostrarToast(error instanceof Error ? error.message : 'No se pudo crear el usuario.', 'error');
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudo crear el usuario.',
+        'error',
+      );
     }
   }
 
-  actualizarNuevoUsuario(campo: 'username' | 'password' | 'role', valor: string): void {
-    if (campo === 'role' && valor !== 'admin' && valor !== 'operator') return;
+  async restablecerContrasena(usuarioId: string): Promise<void> {
+    const password = this.nuevaContrasena();
+    if (password.length < 12) {
+      this.mostrarToast('La nueva contraseña debe tener al menos 12 caracteres.', 'error');
+      return;
+    }
+
+    this.usuarioRestableciendo.set(usuarioId);
+    try {
+      await this.authService.restablecerContrasena(usuarioId, password);
+      this.usuarioParaRestablecer.set(null);
+      this.nuevaContrasena.set('');
+      this.mostrarToast('Se restableció la contraseña y se cerraron las otras sesiones.');
+    } catch (error: unknown) {
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudo restablecer la contraseña.',
+        'error',
+      );
+    } finally {
+      this.usuarioRestableciendo.set(null);
+    }
+  }
+
+  actualizarNuevoUsuario(campo: 'username' | 'password' | 'role' | 'areaId', valor: string): void {
+    if (
+      campo === 'role' &&
+      valor !== 'admin' &&
+      valor !== 'operator' &&
+      valor !== 'solicitante' &&
+      valor !== 'dashboard'
+    ) {
+      return;
+    }
     this.nuevoUsuario.update((usuario) => ({ ...usuario, [campo]: valor }));
+  }
+
+  nombreRol(role: SystemRole): string {
+    const names: Record<SystemRole, string> = {
+      admin: 'Administrador',
+      operator: 'Operador',
+      solicitante: 'Solicitante',
+      dashboard: 'Dashboard (solo lectura)',
+    };
+    return names[role];
   }
 
   alternarMenuMovil(): void {
@@ -453,6 +596,55 @@ export class App implements OnDestroy {
     }
     this.modalActivo.set(null);
     this.errorFormulario.set('');
+  }
+
+  abrirReemplazo(puestoId: string): void {
+    const puesto = this.puestos().find((item) => item.id === puestoId);
+    if (!puesto || puesto.componentes.length === 0) {
+      this.mostrarToast('El puesto no tiene componentes registrados para reemplazar.', 'error');
+      return;
+    }
+    this.reemplazoPuestoId.set(puestoId);
+    this.reemplazoComponenteId.set('');
+    this.reemplazoStockId.set('');
+    this.reemplazoStockBusqueda.set('');
+    this.reemplazoMotivoTipo.set('Falla');
+    this.reemplazoMotivoDetalle.set('');
+    this.reemplazoConfirmado.set(false);
+    this.reemplazoError.set('');
+    this.reemplazoModalAbierto.set(true);
+  }
+
+  cerrarReemplazo(): void {
+    if (this.reemplazoGuardando()) return;
+    this.reemplazoModalAbierto.set(false);
+    this.reemplazoPuestoId.set('');
+    this.reemplazoComponenteId.set('');
+    this.reemplazoStockId.set('');
+    this.reemplazoStockBusqueda.set('');
+    this.reemplazoMotivoDetalle.set('');
+    this.reemplazoConfirmado.set(false);
+    this.reemplazoError.set('');
+  }
+
+  seleccionarStockReemplazo(value: string): void {
+    this.reemplazoStockBusqueda.set(value);
+    const option = this.opcionesStockReemplazo().find((item) => item.label === value);
+    this.reemplazoStockId.set(option?.id ?? '');
+    this.reemplazoConfirmado.set(false);
+    this.reemplazoError.set('');
+  }
+
+  actualizarConfirmacionReemplazo(event: Event): void {
+    const checkbox = event.target;
+    if (checkbox instanceof HTMLInputElement) {
+      this.reemplazoConfirmado.set(checkbox.checked);
+      this.reemplazoError.set('');
+    }
+  }
+
+  etiquetaStockReemplazo(insumo: StockInsumo, index: number): string {
+    return `${insumo.marca} · ${insumo.especificacion} · ${insumo.tipo} · ${insumo.cantidadDisponible} disponibles · opción ${index + 1}`;
   }
 
   abrirModalComponente(puestoId: string): void {
@@ -587,7 +779,9 @@ export class App implements OnDestroy {
       this.cerrarModal();
       this.mostrarToast(`Se creó ${piso.nombre}.`);
     } catch (error: unknown) {
-      this.errorFormulario.set(error instanceof Error ? error.message : 'No se pudo crear el piso.');
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo crear el piso.',
+      );
     }
   }
 
@@ -605,7 +799,9 @@ export class App implements OnDestroy {
       this.cerrarModal();
       this.mostrarToast(`Se creó el área ${nombre}.`);
     } catch (error: unknown) {
-      this.errorFormulario.set(error instanceof Error ? error.message : 'No se pudo crear el área.');
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo crear el área.',
+      );
     }
   }
 
@@ -631,7 +827,9 @@ export class App implements OnDestroy {
       this.cerrarModal();
       this.mostrarToast('El ingreso se agregó al stock.');
     } catch (error: unknown) {
-      this.errorFormulario.set(error instanceof Error ? error.message : 'No se pudo guardar el stock.');
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo guardar el stock.',
+      );
     }
   }
 
@@ -653,7 +851,7 @@ export class App implements OnDestroy {
         areaId: this.nuevoPuesto.areaId,
         nombrePuesto: this.nuevoPuesto.nombrePuesto.trim(),
         usuarioAsignado: this.nuevoPuesto.usuarioAsignado.trim(),
-        componentes: []
+        componentes: [],
       });
       await this.inventoryService.guardarEnServidor();
       this.nuevoPuesto.nombrePuesto = '';
@@ -661,7 +859,9 @@ export class App implements OnDestroy {
       this.cerrarModal();
       this.mostrarToast('El puesto se registró correctamente.');
     } catch (error: unknown) {
-      this.errorFormulario.set(error instanceof Error ? error.message : 'No se pudo registrar el puesto.');
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo registrar el puesto.',
+      );
     }
   }
 
@@ -699,11 +899,7 @@ export class App implements OnDestroy {
   }
 
   eliminarEquipoRed(equipo: EquipoRed): void {
-    this.solicitarEliminacion(
-      'RED',
-      equipo.id,
-      `${equipo.tipo} ${equipo.marca} ${equipo.modelo}`,
-    );
+    this.solicitarEliminacion('RED', equipo.id, `${equipo.tipo} ${equipo.marca} ${equipo.modelo}`);
   }
 
   async cambiarEstadoRetirado(id: string, estado: string): Promise<void> {
@@ -717,7 +913,10 @@ export class App implements OnDestroy {
       await this.inventoryService.guardarEnServidor();
       this.mostrarToast('Se actualizó el estado del componente.');
     } catch (error: unknown) {
-      this.mostrarToast(error instanceof Error ? error.message : 'No se pudo actualizar el estado.', 'error');
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudo actualizar el estado.',
+        'error',
+      );
     }
   }
 
@@ -783,26 +982,55 @@ export class App implements OnDestroy {
     });
   }
 
-  async ejecutarReemplazo(puestoId: string, tipo: string, insumoStockId: string): Promise<void> {
-    if (!insumoStockId) {
-      this.mostrarToast('Seleccioná un insumo disponible para reemplazar.', 'error');
+  async ejecutarReemplazo(): Promise<void> {
+    const puesto = this.reemplazoPuesto();
+    const componente = this.componenteSaliente();
+    const insumo = this.insumoEntrante();
+    const motivo = this.motivoReemplazo();
+
+    if (!puesto || !componente) {
+      this.reemplazoError.set('Seleccioná el equipo saliente que vas a retirar.');
       return;
     }
-    const tipoValidado = this.tiposPerifericos.find((tipoPeriferico) => tipoPeriferico === tipo);
-    if (!tipoValidado) {
-      this.mostrarToast('El tipo de componente seleccionado no es válido.', 'error');
+    if (!insumo) {
+      this.reemplazoError.set('Seleccioná un equipo nuevo disponible en el stock.');
       return;
     }
+    if (!this.reemplazoMotivoTipo() || (this.reemplazoMotivoTipo() === 'Otro' && !this.reemplazoMotivoDetalle().trim())) {
+      this.reemplazoError.set('Indicá un motivo para el reemplazo.');
+      return;
+    }
+    if (!this.reemplazoConfirmado()) {
+      this.reemplazoError.set('Confirmá que revisaste los equipos y el movimiento de stock.');
+      return;
+    }
+
+    this.reemplazoGuardando.set(true);
+    this.reemplazoError.set('');
     try {
-      this.inventoryService.reemplazarComponente(puestoId, tipoValidado, insumoStockId);
+      this.inventoryService.reemplazarComponente(puesto.id, componente.id, insumo.id, motivo);
       await this.inventoryService.guardarEnServidor();
-      this.mostrarToast('Reemplazo realizado correctamente.');
+      this.cerrarReemplazoDespuesDeGuardar();
+      this.mostrarToast('Reemplazo confirmado. El equipo entrante quedó instalado y el stock actualizado.');
     } catch (error: unknown) {
-      this.mostrarToast(
-        error instanceof Error ? error.message : 'No se pudo reemplazar el componente.',
-        'error',
-      );
+      const message =
+        error instanceof Error ? error.message : 'No se pudo reemplazar el componente.';
+      this.reemplazoError.set(message);
+      this.mostrarToast(message, 'error');
+    } finally {
+      this.reemplazoGuardando.set(false);
     }
+  }
+
+  private cerrarReemplazoDespuesDeGuardar(): void {
+    this.reemplazoModalAbierto.set(false);
+    this.reemplazoPuestoId.set('');
+    this.reemplazoComponenteId.set('');
+    this.reemplazoStockId.set('');
+    this.reemplazoStockBusqueda.set('');
+    this.reemplazoMotivoDetalle.set('');
+    this.reemplazoConfirmado.set(false);
+    this.reemplazoError.set('');
   }
 
   eliminarPuesto(id: string) {
@@ -864,14 +1092,15 @@ export class App implements OnDestroy {
         const componentesDeTipo = (tipo: TipoPeriferico): string =>
           componentes
             .filter((componente) => componente.tipo === tipo)
-            .map((componente) => `${componente.marca} ${componente.modelo ?? ''} ${componente.especificacion}`.trim())
+            .map((componente) =>
+              `${componente.marca} ${componente.modelo ?? ''} ${componente.especificacion}`.trim(),
+            )
             .join(' | ');
         const procesador = componentes.find((componente) => componente.tipo === 'PROCESADOR');
         const fabricanteProcesador = procesador
           ? `${procesador.marca} ${procesador.modelo ?? ''} ${procesador.especificacion}`.toLocaleLowerCase()
           : '';
-        const velocidadReloj =
-          fabricanteProcesador.match(/\d+(?:[.,]\d+)?\s*ghz/i)?.[0] ?? '';
+        const velocidadReloj = fabricanteProcesador.match(/\d+(?:[.,]\d+)?\s*ghz/i)?.[0] ?? '';
         const movimientosPuesto = this.historial().filter(
           (movimiento) => movimiento.puestoId === puesto.id,
         );
@@ -887,7 +1116,9 @@ export class App implements OnDestroy {
           .map((componente) => `${componente.tipo}: ${componente.numeroSerie}`)
           .join(' | ');
         const cpuNoClasificada =
-          procesador && !fabricanteProcesador.includes('intel') && !fabricanteProcesador.includes('amd')
+          procesador &&
+          !fabricanteProcesador.includes('intel') &&
+          !fabricanteProcesador.includes('amd')
             ? `Procesador: ${procesador.marca} ${procesador.modelo ?? ''} ${procesador.especificacion}`.trim()
             : '';
 

@@ -1,0 +1,97 @@
+<main class="dashboard-shell">
+  <header class="dashboard-header">
+    <div>
+      <span class="eyebrow">GESTIÓN IT · CONSULTA</span>
+      <h1>Dashboard de inventario</h1>
+      <p>Vista de solo lectura para stock y parque informático.</p>
+    </div>
+    <div class="user-actions">
+      <span>{{ authService.user()?.username }}</span>
+      <button type="button" (click)="cerrarSesion()">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <section class="summary-grid" aria-label="Resumen del inventario">
+    <article>
+      <span>Puestos registrados</span><strong>{{ inventory.puestos().length }}</strong>
+    </article>
+    <article>
+      <span>Áreas</span><strong>{{ inventory.areas().length }}</strong>
+    </article>
+    <article>
+      <span>Tipos de stock</span><strong>{{ inventory.stock().length }}</strong>
+    </article>
+    <article>
+      <span>Unidades en stock</span><strong>{{ totalUnits() }}</strong>
+    </article>
+  </section>
+
+  <section class="dashboard-grid">
+    <article class="dashboard-panel">
+      <header>
+        <h2>Stock actual</h2>
+        <span>Solo lectura</span>
+      </header>
+      @if (inventory.stock().length === 0) {
+        <p class="empty-state">No hay insumos registrados.</p>
+      } @else {
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Producto</th>
+                <th>Disponible</th>
+                <th>Mínimo</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of inventory.stock(); track item.id) {
+                <tr>
+                  <td>{{ item.tipo }}</td>
+                  <td>
+                    <strong>{{ item.marca }}</strong
+                    ><small>{{ item.especificacion }}</small>
+                  </td>
+                  <td>{{ item.cantidadDisponible }}</td>
+                  <td>{{ item.stockMinimo }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </article>
+
+    <article class="dashboard-panel">
+      <header>
+        <h2>Parque informático</h2>
+        <span>Equipos y series registrados</span>
+      </header>
+      @if (inventory.puestos().length === 0) {
+        <p class="empty-state">No hay puestos registrados.</p>
+      } @else {
+        <div class="workstation-list">
+          @for (puesto of inventory.puestos(); track puesto.id) {
+            <section>
+              <div>
+                <strong>{{ puesto.nombrePuesto }}</strong
+                ><small>{{ puesto.usuarioAsignado }} · {{ nombreArea(puesto.areaId) }}</small>
+              </div>
+              <ul>
+                @for (component of puesto.componentes; track component.id) {
+                  <li>
+                    {{ component.tipo }} · {{ component.marca }} {{ component.modelo ?? '' }}
+                    @if (component.numeroSerie) {
+                      <code>S/N {{ component.numeroSerie }}</code>
+                    }
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+        </div>
+      }
+    </article>
+  </section>
+</main>

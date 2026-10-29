@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { hashPassword, verifyPassword } from './password';
+import { requireRoles, type SessionUser, type SystemRole } from './session-user';
 
 export interface InventorySnapshot {
   pisos: unknown[];
@@ -18,18 +19,6 @@ export interface InventorySnapshot {
 interface StoredSnapshot {
   revision: string;
   payload: InventorySnapshot;
-}
-
-interface SessionUser {
-  id: string;
-  username: string;
-  role: 'admin' | 'operator';
-}
-
-declare module 'express-session' {
-  interface SessionData {
-    user?: SessionUser;
-  }
 }
 
 const externalTypes = new Set(['MONITOR', 'TECLADO', 'MOUSE', 'IMPRESORA', 'SCANNER']);
@@ -76,9 +65,11 @@ function isInventorySnapshot(value: unknown): value is InventorySnapshot {
 
   const puestos = snapshot['puestos'] as Record<string, unknown>[];
   const stock = snapshot['stock'] as Record<string, unknown>[];
+  const areas = snapshot['areas'] as Record<string, unknown>[];
   const equiposRed = snapshot['equiposRed'] as Record<string, unknown>[];
   const componentesRetirados = snapshot['componentesRetirados'] as Record<string, unknown>[];
   return (
+    areas.every((area) => typeof area['nombre'] === 'string' && area['nombre'].trim().length > 0) &&
     puestos.every(
       (puesto) =>
         Array.isArray(puesto['componentes']) &&
@@ -86,14 +77,37 @@ function isInventorySnapshot(value: unknown): value is InventorySnapshot {
           (component) => isRecord(component) && typeof component['id'] === 'string',
         ),
     ) &&
-    [...stock, ...puestos.flatMap((puesto) => puesto['componentes'] as Record<string, unknown>[])].every(
-      (item) => typeof item['tipo'] === 'string' && peripheralTypes.has(item['tipo']),
-    ) &&
+    [
+      ...stock,
+      ...puestos.flatMap((puesto) => puesto['componentes'] as Record<string, unknown>[]),
+    ].every((item) => typeof item['tipo'] === 'string' && peripheralTypes.has(item['tipo'])) &&
     equiposRed.every(
       (equipo) => typeof equipo['tipo'] === 'string' && networkTypes.has(equipo['tipo']),
     ) &&
     componentesRetirados.every((item) => isRecord(item['componente']))
   );
+}
+
+async function syncInventoryAreas(client: PoolClient, snapshot: InventorySnapshot): Promise<void> {
+  await client.query(
+    'UPDATE gestion_it.areas SET activo = false WHERE inventory_area_id IS NOT NULL',
+  );
+  for (const value of snapshot.areas) {
+    if (
+      !isRecord(value) ||
+      typeof value['id'] !== 'string' ||
+      typeof value['nombre'] !== 'string'
+    ) {
+      throw new Error('El inventario contiene un área inválida.');
+    }
+    await client.query(
+      `INSERT INTO gestion_it.areas (id, nombre, inventory_area_id, activo)
+       VALUES ($1, $2, $3, true)
+       ON CONFLICT (inventory_area_id)
+       DO UPDATE SET nombre = EXCLUDED.nombre, activo = true`,
+      [randomUUID(), value['nombre'].trim(), value['id']],
+    );
+  }
 }
 
 function ensureTrackingCode(value: unknown, prefix: string): string {
@@ -155,12 +169,21 @@ function hasUniqueTrackingCodes(snapshot: InventorySnapshot): boolean {
   return new Set(codes).size === codes.length;
 }
 
-function requireUser(request: Request, response: Response, next: express.NextFunction): void {
-  if (!request.session.user) {
-    response.status(401).json({ error: 'Iniciá sesión para continuar.' });
-    return;
-  }
-  next();
+const requireUser = requireRoles(['admin', 'operator', 'solicitante', 'dashboard']);
+const requireInventoryViewer = requireRoles(['admin', 'operator', 'dashboard']);
+const requireInventoryEditor = requireRoles(['admin', 'operator']);
+const requireAdministrator = requireRoles(['admin']);
+
+function isSystemRole(value: unknown): value is SystemRole {
+  return (
+    value === 'admin' || value === 'operator' || value === 'solicitante' || value === 'dashboard'
+  );
+}
+
+export function parsePasswordReset(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const password = (value as Record<string, unknown>)['password'];
+  return typeof password === 'string' && password.length >= 12 ? password : null;
 }
 
 function isAdmin(request: Request): boolean {
@@ -259,7 +282,9 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     const username = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
     const password = typeof request.body?.password === 'string' ? request.body.password : '';
     if (!/^[a-zA-Z0-9._-]{3,64}$/.test(username) || password.length < 12) {
-      response.status(400).json({ error: 'Ingresá un usuario válido y una contraseña de al menos 12 caracteres.' });
+      response
+        .status(400)
+        .json({ error: 'Ingresá un usuario válido y una contraseña de al menos 12 caracteres.' });
       return;
     }
 
@@ -276,11 +301,17 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
 
-      const user: SessionUser = { id: randomUUID(), username, role: 'admin' };
+      const user: SessionUser = {
+        id: randomUUID(),
+        username,
+        role: 'admin',
+        areaId: null,
+        areaNombre: null,
+      };
       const passwordHash = await hashPassword(password);
       await client.query(
-        'INSERT INTO gestion_it.app_users (id, username, password_hash, role) VALUES ($1, $2, $3, $4)',
-        [user.id, username, passwordHash, user.role],
+        'INSERT INTO gestion_it.app_users (id, username, password_hash, role, area_id) VALUES ($1, $2, $3, $4, $5)',
+        [user.id, username, passwordHash, user.role, user.areaId],
       );
       await client.query('COMMIT');
       establishSession(request, response, user, next, 201);
@@ -304,49 +335,63 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       resetAt: current?.resetAt ?? Date.now() + 15 * 60 * 1000,
     });
   };
-  router.post('/auth/login', (request, response, next) => {
-    const now = Date.now();
-    const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
-    const current = loginFailures.get(key);
-    if (current && current.resetAt > now && current.attempts >= 10) {
-      response.status(429).json({ error: 'Demasiados intentos. Esperá 15 minutos antes de volver a intentar.' });
-      return;
-    }
-    if (!current || current.resetAt <= now) {
-      loginFailures.set(key, { attempts: 0, resetAt: now + 15 * 60 * 1000 });
-    }
-    next();
-  }, async (request, response, next) => {
-    const username = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
-    const password = typeof request.body?.password === 'string' ? request.body.password : '';
-    try {
-      const result = await pool.query<{
-        id: string;
-        username: string;
-        password_hash: string;
-        role: 'admin' | 'operator';
-      }>(
-        'SELECT id, username, password_hash, role FROM gestion_it.app_users WHERE username = $1',
-        [username],
-      );
-      const record = result.rows[0];
-      if (!record || !(await verifyPassword(password, record.password_hash))) {
-        const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
-        registerLoginFailure(key);
-        response.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+  router.post(
+    '/auth/login',
+    (request, response, next) => {
+      const now = Date.now();
+      const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
+      const current = loginFailures.get(key);
+      if (current && current.resetAt > now && current.attempts >= 10) {
+        response
+          .status(429)
+          .json({ error: 'Demasiados intentos. Esperá 15 minutos antes de volver a intentar.' });
         return;
       }
-      loginFailures.delete(request.ip ?? request.socket.remoteAddress ?? 'unknown');
-      const user: SessionUser = {
-        id: record.id,
-        username: record.username,
-        role: record.role,
-      };
-      establishSession(request, response, user, next);
-    } catch (error) {
-      next(error);
-    }
-  });
+      if (!current || current.resetAt <= now) {
+        loginFailures.set(key, { attempts: 0, resetAt: now + 15 * 60 * 1000 });
+      }
+      next();
+    },
+    async (request, response, next) => {
+      const username =
+        typeof request.body?.username === 'string' ? request.body.username.trim() : '';
+      const password = typeof request.body?.password === 'string' ? request.body.password : '';
+      try {
+        const result = await pool.query<{
+          id: string;
+          username: string;
+          password_hash: string;
+          role: SystemRole;
+          area_id: string | null;
+          area_nombre: string | null;
+        }>(
+          `SELECT u.id, u.username, u.password_hash, u.role, u.area_id, a.nombre AS area_nombre
+         FROM gestion_it.app_users AS u
+         LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         WHERE u.username = $1`,
+          [username],
+        );
+        const record = result.rows[0];
+        if (!record || !(await verifyPassword(password, record.password_hash))) {
+          const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
+          registerLoginFailure(key);
+          response.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+          return;
+        }
+        loginFailures.delete(request.ip ?? request.socket.remoteAddress ?? 'unknown');
+        const user: SessionUser = {
+          id: record.id,
+          username: record.username,
+          role: record.role,
+          areaId: record.area_id,
+          areaNombre: record.area_nombre,
+        };
+        establishSession(request, response, user, next);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.post('/auth/logout', requireUser, (request, response, next) => {
     request.session.destroy((error) => {
@@ -359,7 +404,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     });
   });
 
-  router.get('/inventory', requireUser, async (_request, response, next) => {
+  router.get('/inventory', requireInventoryViewer, async (_request, response, next) => {
     try {
       const result = await pool.query<StoredSnapshot>(
         'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true',
@@ -372,7 +417,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
   });
 
-  router.put('/inventory', requireUser, async (request, response, next) => {
+  router.put('/inventory', requireInventoryEditor, async (request, response, next) => {
     const { revision, payload } = request.body ?? {};
     if (!Number.isSafeInteger(revision) || !isInventorySnapshot(payload)) {
       response.status(400).json({ error: 'El respaldo del inventario tiene un formato inválido.' });
@@ -390,7 +435,8 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       if (Number(currentRow.revision) !== revision) {
         await client.query('ROLLBACK');
         response.status(409).json({
-          error: 'Otro usuario modificó el inventario. Se recargaron los datos más recientes; volvé a intentar la operación.',
+          error:
+            'Otro usuario modificó el inventario. Se recargaron los datos más recientes; volvé a intentar la operación.',
           revision: currentRow.revision,
           payload: currentRow.payload,
         });
@@ -399,7 +445,9 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
 
       const normalized = normalizeSnapshot(payload);
       if (!hasUniqueTrackingCodes(normalized)) {
-        response.status(400).json({ error: 'El inventario contiene códigos de seguimiento duplicados.' });
+        response
+          .status(400)
+          .json({ error: 'El inventario contiene códigos de seguimiento duplicados.' });
         await client.query('ROLLBACK');
         return;
       }
@@ -411,6 +459,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
          RETURNING revision::text, payload`,
         [JSON.stringify(normalized)],
       );
+      await syncInventoryAreas(client, normalized);
       await client.query('COMMIT');
       response.json(saved.rows[0]);
     } catch (error) {
@@ -423,12 +472,16 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
 
   router.post('/inventory/import', requireUser, async (request, response, next) => {
     if (!isAdmin(request)) {
-      response.status(403).json({ error: 'Solo una persona administradora puede importar un respaldo.' });
+      response
+        .status(403)
+        .json({ error: 'Solo una persona administradora puede importar un respaldo.' });
       return;
     }
     const { payload } = request.body ?? {};
     if (!isInventorySnapshot(payload)) {
-      response.status(400).json({ error: 'El archivo no contiene un respaldo de inventario válido.' });
+      response
+        .status(400)
+        .json({ error: 'El archivo no contiene un respaldo de inventario válido.' });
       return;
     }
 
@@ -443,13 +496,17 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       const empty = Object.values(row.payload).every((collection) => collection.length === 0);
       if (!empty) {
         await client.query('ROLLBACK');
-        response.status(409).json({ error: 'La importación solo se permite cuando el inventario del servidor está vacío.' });
+        response.status(409).json({
+          error: 'La importación solo se permite cuando el inventario del servidor está vacío.',
+        });
         return;
       }
       const normalized = normalizeSnapshot(payload);
       if (!hasUniqueTrackingCodes(normalized)) {
         await client.query('ROLLBACK');
-        response.status(400).json({ error: 'El respaldo contiene códigos de seguimiento duplicados.' });
+        response
+          .status(400)
+          .json({ error: 'El respaldo contiene códigos de seguimiento duplicados.' });
         return;
       }
       const saved = await client.query<StoredSnapshot>(
@@ -459,6 +516,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
          RETURNING revision::text, payload`,
         [JSON.stringify(normalized)],
       );
+      await syncInventoryAreas(client, normalized);
       await client.query('COMMIT');
       response.json(saved.rows[0]);
     } catch (error) {
@@ -469,14 +527,10 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
   });
 
-  router.get('/admin/users', requireUser, async (request, response, next) => {
-    if (!isAdmin(request)) {
-      response.status(403).json({ error: 'Permisos insuficientes.' });
-      return;
-    }
+  router.get('/admin/areas', requireAdministrator, async (_request, response, next) => {
     try {
       const result = await pool.query(
-        'SELECT id, username, role, created_at AS "createdAt" FROM gestion_it.app_users ORDER BY username',
+        'SELECT id, nombre FROM gestion_it.areas WHERE activo = true ORDER BY nombre',
       );
       response.json(result.rows);
     } catch (error) {
@@ -484,34 +538,54 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
   });
 
-  router.post('/admin/users', requireUser, async (request, response, next) => {
-    if (!isAdmin(request)) {
-      response.status(403).json({ error: 'Permisos insuficientes.' });
-      return;
+  router.get('/admin/users', requireAdministrator, async (_request, response, next) => {
+    try {
+      const result = await pool.query(
+        `SELECT u.id, u.username, u.role, u.area_id AS "areaId",
+                a.nombre AS "areaNombre", u.created_at AS "createdAt"
+         FROM gestion_it.app_users AS u
+         LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         ORDER BY u.username`,
+      );
+      response.json(result.rows);
+    } catch (error) {
+      next(error);
     }
+  });
+
+  router.post('/admin/users', requireAdministrator, async (request, response, next) => {
     const username = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
     const password = typeof request.body?.password === 'string' ? request.body.password : '';
-    const role = request.body?.role;
+    const roleValue: unknown = request.body?.role;
+    const role = isSystemRole(roleValue) ? roleValue : null;
+    const areaId =
+      typeof request.body?.areaId === 'string' ? request.body.areaId.trim() || null : null;
     if (
       !/^[a-zA-Z0-9._-]{3,64}$/.test(username) ||
       password.length < 12 ||
-      (role !== 'admin' && role !== 'operator')
+      !role ||
+      (role === 'solicitante' && !areaId)
     ) {
       response.status(400).json({
-        error: 'Ingresá un usuario válido, una contraseña de al menos 12 caracteres y un rol permitido.',
+        error:
+          'Ingresá usuario, contraseña, rol válido y asigná un área a las cuentas solicitantes.',
       });
       return;
     }
     try {
       const passwordHash = await hashPassword(password);
       const result = await pool.query(
-        `INSERT INTO gestion_it.app_users (id, username, password_hash, role)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, username, role, created_at AS "createdAt"`,
-        [randomUUID(), username, passwordHash, role],
+        `INSERT INTO gestion_it.app_users (id, username, password_hash, role, area_id)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, username, role, area_id AS "areaId", created_at AS "createdAt"`,
+        [randomUUID(), username, passwordHash, role, areaId],
       );
       response.status(201).json(result.rows[0]);
     } catch (error) {
+      if (typeof error === 'object' && error && 'code' in error && error.code === '23503') {
+        response.status(400).json({ error: 'El área seleccionada no existe.' });
+        return;
+      }
       if (typeof error === 'object' && error && 'code' in error && error.code === '23505') {
         response.status(409).json({ error: 'Ya existe una cuenta con ese usuario.' });
         return;
@@ -520,10 +594,65 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
   });
 
-  router.use((error: unknown, _request: Request, response: Response, _next: express.NextFunction) => {
-    console.error('Error en la API de Gestión IT:', error);
-    response.status(500).json({ error: 'Ocurrió un error interno al procesar la solicitud.' });
+  router.put('/admin/users/:id/password', requireAdministrator, async (request, response, next) => {
+    const password = parsePasswordReset(request.body);
+    if (!password) {
+      response
+        .status(400)
+        .json({ error: 'La nueva contraseña debe tener al menos 12 caracteres.' });
+      return;
+    }
+
+    const userId = request.params['id'];
+    if (typeof userId !== 'string' || !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(userId)) {
+      response.status(400).json({ error: 'El identificador de usuario no es válido.' });
+      return;
+    }
+
+    try {
+      const passwordHash = await hashPassword(password);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const updated = await client.query(
+          `UPDATE gestion_it.app_users
+           SET password_hash = $2
+           WHERE id = $1
+           RETURNING id`,
+          [userId, passwordHash],
+        );
+        if (!updated.rows[0]) {
+          await client.query('ROLLBACK');
+          response.status(404).json({ error: 'No se encontró el usuario.' });
+          return;
+        }
+
+        await client.query(
+          `DELETE FROM gestion_it.sessions
+           WHERE sess -> 'user' ->> 'id' = $1 AND sid <> $2`,
+          [userId, request.sessionID],
+        );
+        await client.query('COMMIT');
+        response.json({
+          message: 'Se restableció la contraseña y se cerraron las otras sesiones.',
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      next(error);
+    }
   });
+
+  router.use(
+    (error: unknown, _request: Request, response: Response, _next: express.NextFunction) => {
+      console.error('Error en la API de Gestión IT:', error);
+      response.status(500).json({ error: 'Ocurrió un error interno al procesar la solicitud.' });
+    },
+  );
 
   return router;
 }
