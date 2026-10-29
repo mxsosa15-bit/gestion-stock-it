@@ -1,4 +1,9 @@
-import { normalizeSnapshot, parsePasswordReset, type InventorySnapshot } from './inventory-api';
+import {
+  createLoginFailureKey,
+  normalizeSnapshot,
+  parsePasswordReset,
+  type InventorySnapshot,
+} from './inventory-api';
 
 describe('normalizeSnapshot', () => {
   it('generates unique tracking codes on the server only for trackable inventory', () => {
@@ -45,6 +50,20 @@ describe('normalizeSnapshot', () => {
 describe('parsePasswordReset', () => {
   it('accepts a password that meets the minimum length', () => {
     expect(parsePasswordReset({ password: 'a-secure-password' })).toBe('a-secure-password');
+  });
+
+  describe('createLoginFailureKey', () => {
+    it('isolates accounts sharing an IP and normalizes username casing and whitespace', () => {
+      expect(createLoginFailureKey('192.0.2.10', ' Admin ')).toBe(
+        createLoginFailureKey('192.0.2.10', 'admin'),
+      );
+      expect(createLoginFailureKey('192.0.2.10', 'admin')).not.toBe(
+        createLoginFailureKey('192.0.2.10', 'operator'),
+      );
+      expect(createLoginFailureKey('192.0.2.10', 'admin')).not.toBe(
+        createLoginFailureKey('192.0.2.11', 'admin'),
+      );
+    });
   });
 
   it('rejects missing, short, or non-string passwords', () => {

@@ -18,6 +18,7 @@ import { AssetLabelsComponent } from './components/asset-labels/asset-labels.com
 import { AreaAssetsExplorerComponent } from './components/area-assets-explorer/area-assets-explorer.component';
 import { SupportTicketsComponent } from './components/support-tickets/support-tickets.component';
 import { ReadOnlyDashboardComponent } from './components/read-only-dashboard/read-only-dashboard.component';
+import { OperationsDashboardComponent } from './components/operations-dashboard/operations-dashboard.component';
 import {
   EquipoRed,
   EstadoComponenteRetirado,
@@ -38,7 +39,15 @@ type ModalActivo =
   | null;
 
 type VistaActiva =
-  'PARQUE' | 'STOCK' | 'EDIFICIO' | 'REPORTES' | 'REDES' | 'TALLER' | 'PATRIMONIO' | 'TICKETS';
+  | 'DASHBOARD'
+  | 'PARQUE'
+  | 'STOCK'
+  | 'EDIFICIO'
+  | 'REPORTES'
+  | 'REDES'
+  | 'TALLER'
+  | 'PATRIMONIO'
+  | 'TICKETS';
 
 type TipoConfirmacion = 'PUESTO' | 'STOCK' | 'PISO' | 'AREA' | 'RED';
 
@@ -64,6 +73,7 @@ interface ToastNotification {
     AreaAssetsExplorerComponent,
     SupportTicketsComponent,
     ReadOnlyDashboardComponent,
+    OperationsDashboardComponent,
   ],
   templateUrl: './app.html',
 })
@@ -182,10 +192,11 @@ export class App implements OnDestroy {
   }
 
   // Navegación por pestañas
-  vistaActiva = signal<VistaActiva>('PARQUE');
+  vistaActiva = signal<VistaActiva>('DASHBOARD');
   readonly menuMovilAbierto = signal(false);
   readonly tituloVista = computed(() => {
     const titulos: Record<VistaActiva, string> = {
+      DASHBOARD: 'Dashboard operativo',
       PARQUE: 'Gestión de Parque IT',
       STOCK: 'Depósito y Stock',
       EDIFICIO: 'Gestión de Pisos y Áreas',
@@ -212,9 +223,7 @@ export class App implements OnDestroy {
   readonly reemplazoPuesto = computed(
     () => this.puestos().find((puesto) => puesto.id === this.reemplazoPuestoId()) ?? null,
   );
-  readonly componentesDelReemplazo = computed(
-    () => this.reemplazoPuesto()?.componentes ?? [],
-  );
+  readonly componentesDelReemplazo = computed(() => this.reemplazoPuesto()?.componentes ?? []);
   readonly componenteSaliente = computed(
     () =>
       this.componentesDelReemplazo().find(
@@ -996,7 +1005,10 @@ export class App implements OnDestroy {
       this.reemplazoError.set('Seleccioná un equipo nuevo disponible en el stock.');
       return;
     }
-    if (!this.reemplazoMotivoTipo() || (this.reemplazoMotivoTipo() === 'Otro' && !this.reemplazoMotivoDetalle().trim())) {
+    if (
+      !this.reemplazoMotivoTipo() ||
+      (this.reemplazoMotivoTipo() === 'Otro' && !this.reemplazoMotivoDetalle().trim())
+    ) {
       this.reemplazoError.set('Indicá un motivo para el reemplazo.');
       return;
     }
@@ -1011,7 +1023,9 @@ export class App implements OnDestroy {
       this.inventoryService.reemplazarComponente(puesto.id, componente.id, insumo.id, motivo);
       await this.inventoryService.guardarEnServidor();
       this.cerrarReemplazoDespuesDeGuardar();
-      this.mostrarToast('Reemplazo confirmado. El equipo entrante quedó instalado y el stock actualizado.');
+      this.mostrarToast(
+        'Reemplazo confirmado. El equipo entrante quedó instalado y el stock actualizado.',
+      );
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'No se pudo reemplazar el componente.';

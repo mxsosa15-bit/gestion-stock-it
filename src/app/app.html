@@ -29,7 +29,13 @@
         aria-label="DOSEP - Gestión de Parque IT"
         (click)="
           $event.preventDefault();
-          cambiarVista(authService.user()?.role === 'solicitante' ? 'TICKETS' : 'PARQUE')
+          cambiarVista(
+            authService.user()?.role === 'solicitante'
+              ? 'TICKETS'
+              : authService.user()?.role === 'dashboard'
+                ? 'PARQUE'
+                : 'DASHBOARD'
+          )
         "
       >
         <span class="brand-logo">
@@ -51,6 +57,14 @@
 
       <span class="sidebar-caption">MENÚ PRINCIPAL</span>
       <nav class="sidebar-nav" aria-label="Navegación principal">
+        <button
+          *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+          type="button"
+          (click)="cambiarVista('DASHBOARD')"
+          [class.active]="vistaActiva() === 'DASHBOARD'"
+        >
+          <span class="nav-icon">▤</span><span>Dashboard</span>
+        </button>
         <button
           *ngIf="
             authService.user()?.role === 'solicitante' ||
@@ -154,6 +168,14 @@
       </header>
 
       <div class="page-content">
+        @defer (when vistaActiva() === 'DASHBOARD') {
+          <app-operations-dashboard
+            *ngIf="vistaActiva() === 'DASHBOARD'"
+          ></app-operations-dashboard>
+        } @placeholder {
+        } @loading (after 100ms) {
+          <p class="feedback" role="status">Preparando el dashboard operativo…</p>
+        }
         @defer (when vistaActiva() === 'TICKETS') {
           <app-support-tickets *ngIf="vistaActiva() === 'TICKETS'"></app-support-tickets>
         } @placeholder {

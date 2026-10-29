@@ -36,7 +36,7 @@ describe('App', () => {
   it('should render title', async () => {
     const fixture = createApp();
     await fixture.whenStable();
-    expect(fixture.componentInstance.tituloVista()).toBe('Gestión de Parque IT');
+    expect(fixture.componentInstance.tituloVista()).toBe('Dashboard operativo');
   });
 
   it('keeps the existing card view as default and supports switching to the list', () => {

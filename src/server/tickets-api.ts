@@ -43,6 +43,7 @@ interface TicketRecord extends TicketInput {
   estado: 'Abierto' | 'En proceso' | 'Terminado';
   solucion: string | null;
   fecha_creacion: Date;
+  fecha_resolucion: Date | null;
   usuario_id: string;
   usuario_area_id: string | null;
   inventory_area_id: string | null;
@@ -124,7 +125,8 @@ export function parseTicketUpdate(value: unknown): TicketUpdate | null {
 
 const ticketOrder = `ORDER BY t.fecha_creacion DESC, t.id DESC`;
 const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estado, t.solucion,
-                             t.fecha_creacion, t.usuario_id, u.area_id AS usuario_area_id,
+                             t.fecha_creacion, t.fecha_resolucion, t.usuario_id,
+                             u.area_id AS usuario_area_id,
                              a.inventory_area_id,
                              u.username AS usuario_nombre, a.nombre AS area_nombre,
                              workshop.transferencia AS taller
@@ -166,11 +168,7 @@ export function canRequesterSeeTicketInArea(
   return requesterAreaId !== null && requesterAreaId === ticketAreaId;
 }
 
-function publishTicketEvent(
-  id: string,
-  action: string,
-  usuarioAreaId: string | null,
-): void {
+function publishTicketEvent(id: string, action: string, usuarioAreaId: string | null): void {
   for (const listener of ticketListeners) {
     listener({ id, action, usuarioAreaId });
   }
@@ -201,11 +199,7 @@ export function createTicketsApi(pool: Pool): express.Router {
         'X-Accel-Buffering': 'no',
       });
       response.flushHeaders();
-      const listener = (event: {
-        id: string;
-        action: string;
-        usuarioAreaId: string | null;
-      }) => {
+      const listener = (event: { id: string; action: string; usuarioAreaId: string | null }) => {
         if (
           viewer.role === 'solicitante' &&
           !canRequesterSeeTicketInArea(viewer.areaId, event.usuarioAreaId)
@@ -452,7 +446,11 @@ export function createTicketsApi(pool: Pool): express.Router {
       const result = await pool.query<{ id: string }>(
         `UPDATE gestion_it.tickets AS t
          SET estado = $2,
-             solucion = CASE WHEN $2 = 'Terminado' THEN $3 ELSE t.solucion END
+             solucion = CASE WHEN $2 = 'Terminado' THEN $3 ELSE t.solucion END,
+             fecha_resolucion = CASE
+               WHEN $2 = 'Terminado' THEN COALESCE(t.fecha_resolucion, now())
+               ELSE NULL
+             END
          WHERE t.id = $1
            AND (
              $2 <> 'Terminado'

@@ -186,6 +186,10 @@ export function parsePasswordReset(value: unknown): string | null {
   return typeof password === 'string' && password.length >= 12 ? password : null;
 }
 
+export function createLoginFailureKey(ipAddress: string, username: string): string {
+  return JSON.stringify([ipAddress, username.trim().toLowerCase()]);
+}
+
 function isAdmin(request: Request): boolean {
   return request.session.user?.role === 'admin';
 }
@@ -324,6 +328,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
   });
 
   const loginFailures = new Map<string, { attempts: number; resetAt: number }>();
+  const getLoginFailureKey = (request: Request): string => {
+    const ipAddress = request.ip ?? request.socket.remoteAddress ?? 'unknown';
+    const username = typeof request.body?.username === 'string' ? request.body.username : '';
+    return createLoginFailureKey(ipAddress, username);
+  };
   const registerLoginFailure = (key: string): void => {
     if (!loginFailures.has(key) && loginFailures.size >= 10_000) {
       const oldestKey = loginFailures.keys().next().value;
@@ -339,12 +348,13 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     '/auth/login',
     (request, response, next) => {
       const now = Date.now();
-      const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
+      const key = getLoginFailureKey(request);
       const current = loginFailures.get(key);
       if (current && current.resetAt > now && current.attempts >= 10) {
-        response
-          .status(429)
-          .json({ error: 'Demasiados intentos. Esperá 15 minutos antes de volver a intentar.' });
+        response.status(429).json({
+          error:
+            'Demasiados intentos para esta cuenta desde esta red. Esperá 15 minutos antes de volver a intentar.',
+        });
         return;
       }
       if (!current || current.resetAt <= now) {
@@ -373,12 +383,12 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         );
         const record = result.rows[0];
         if (!record || !(await verifyPassword(password, record.password_hash))) {
-          const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
+          const key = getLoginFailureKey(request);
           registerLoginFailure(key);
           response.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
           return;
         }
-        loginFailures.delete(request.ip ?? request.socket.remoteAddress ?? 'unknown');
+        loginFailures.delete(getLoginFailureKey(request));
         const user: SessionUser = {
           id: record.id,
           username: record.username,

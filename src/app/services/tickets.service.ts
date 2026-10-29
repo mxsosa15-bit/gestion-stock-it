@@ -26,6 +26,7 @@ export interface SupportTicket {
   estado: TicketState;
   solucion: string | null;
   fecha_creacion: string;
+  fecha_resolucion: string | null;
   usuario_id: string;
   usuario_nombre: string;
   area_nombre: string | null;
@@ -61,9 +62,7 @@ export class TicketsService {
   async listarPorArea(areaId: string): Promise<SupportTicket[]> {
     try {
       return await firstValueFrom(
-        this.http.get<SupportTicket[]>(
-          `/api/tickets/areas/${encodeURIComponent(areaId)}`,
-        ),
+        this.http.get<SupportTicket[]>(`/api/tickets/areas/${encodeURIComponent(areaId)}`),
       );
     } catch (error: unknown) {
       throw new Error(
