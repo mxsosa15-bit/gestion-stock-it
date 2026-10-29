@@ -15,7 +15,7 @@ import {
 import type { Chart } from 'chart.js';
 import { TICKET_CATEGORIES, type TicketCategory } from '../../../shared/tickets';
 import { InventoryService } from '../../services/inventory.service';
-import { SupportTicket, TicketsService } from '../../services/tickets.service';
+import { TicketsService, type DashboardTicket } from '../../services/tickets.service';
 
 interface TicketEvent {
   id: string;
@@ -54,7 +54,7 @@ export class OperationsDashboardComponent implements OnInit, AfterViewInit, OnDe
   @ViewChild('categoryCanvas') private categoryCanvas?: ElementRef<HTMLCanvasElement>;
   @ViewChild('resolvedCanvas') private resolvedCanvas?: ElementRef<HTMLCanvasElement>;
 
-  readonly tickets = signal<SupportTicket[]>([]);
+  readonly tickets = signal<DashboardTicket[]>([]);
   readonly loading = signal(true);
   readonly error = signal('');
   readonly liveConnected = signal(false);
@@ -282,7 +282,7 @@ export class OperationsDashboardComponent implements OnInit, AfterViewInit, OnDe
     if (showLoading) this.loading.set(true);
     this.error.set('');
     try {
-      const tickets = await this.ticketsService.listar();
+      const tickets = await this.ticketsService.listarParaDashboard();
       if (requestSequence !== this.requestSequence) return;
       this.tickets.set(tickets);
       this.actualizarGraficos();

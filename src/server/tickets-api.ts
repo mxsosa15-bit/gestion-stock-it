@@ -67,6 +67,18 @@ interface TicketRecord extends Omit<TicketInput, 'puestoAfectadoId'> {
   taller: WorkshopTransferRecord | null;
 }
 
+interface DashboardTicketRecord {
+  id: string;
+  titulo: string;
+  categoria: TicketCategory;
+  estado: 'Abierto' | 'En proceso' | 'Terminado';
+  fecha_creacion: Date;
+  fecha_resolucion: Date | null;
+  area_nombre: string | null;
+  nombre_afectado: string | null;
+  taller: { estado: WorkshopTransferRecord['estado'] } | null;
+}
+
 export function parseTicketInput(value: unknown): TicketInput | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
 
@@ -215,7 +227,7 @@ export function createTicketsApi(pool: Pool): express.Router {
 
   router.get(
     '/tickets/events',
-    requireRoles(['admin', 'operator', 'solicitante']),
+    requireRoles(['admin', 'operator', 'solicitante', 'dashboard']),
     (request, response) => {
       const viewer = request.session.user;
       if (!viewer) {
@@ -249,6 +261,35 @@ export function createTicketsApi(pool: Pool): express.Router {
       });
     },
   );
+
+  router.get('/tickets/dashboard', requireRoles(['admin', 'operator', 'dashboard']), async (_request, response, next) => {
+    try {
+      const result = await pool.query<DashboardTicketRecord>(
+        `SELECT t.id, t.titulo, t.categoria, t.estado,
+                t.fecha_creacion, t.fecha_resolucion,
+                a.nombre AS area_nombre, t.nombre_afectado,
+                workshop.transferencia AS taller
+         FROM gestion_it.tickets AS t
+         JOIN gestion_it.app_users AS u ON u.id = t.usuario_id
+         LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         LEFT JOIN LATERAL (
+           SELECT jsonb_build_object(
+             'estado', wt.estado,
+             'equipo', wt.equipo,
+             'identificacion', wt.identificacion
+           ) AS transferencia
+           FROM gestion_it.ticket_workshop_transfers AS wt
+           WHERE wt.ticket_id = t.id
+           ORDER BY wt.solicitado_at DESC, wt.id DESC
+           LIMIT 1
+         ) AS workshop ON true
+         ${ticketOrder}`,
+      );
+      response.json(result.rows);
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get('/tickets', requireOperator, async (_request, response, next) => {
     try {

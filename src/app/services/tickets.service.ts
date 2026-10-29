@@ -37,6 +37,18 @@ export interface SupportTicket {
   taller: WorkshopTransfer | null;
 }
 
+export interface DashboardTicket {
+  id: string;
+  titulo: string;
+  categoria: TicketCategory;
+  estado: TicketState;
+  fecha_creacion: string;
+  fecha_resolucion: string | null;
+  area_nombre: string | null;
+  nombre_afectado: string | null;
+  taller: Pick<WorkshopTransfer, 'estado' | 'equipo' | 'identificacion'> | null;
+}
+
 export interface AffectedWorkstation {
   id: string;
   nombrePuesto: string;
@@ -58,6 +70,18 @@ export class TicketsService {
       return await firstValueFrom(this.http.get<SupportTicket[]>('/api/tickets'));
     } catch (error: unknown) {
       throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los reclamos activos.'));
+    }
+  }
+
+  async listarParaDashboard(): Promise<DashboardTicket[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<DashboardTicket[]>('/api/tickets/dashboard'),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.obtenerMensaje(error, 'No se pudieron cargar los datos del dashboard.'),
+      );
     }
   }
 
