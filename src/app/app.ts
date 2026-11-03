@@ -1085,7 +1085,7 @@ export class App implements OnDestroy {
 
   async exportarInventarioExcel(): Promise<void> {
     try {
-      const XLSX = await import('xlsx-js-style');
+      const { default: XLSX } = await import('xlsx-js-style');
       const encabezadosPuestos = [
         'PISO',
         'Área',
