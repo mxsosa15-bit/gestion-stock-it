@@ -29,6 +29,8 @@ import {
   TipoEquipoRed,
   TipoPeriferico,
 } from './models/inventory.model';
+import type { ComponentePuesto } from './models/inventory.model';
+import type { ComponentEdit } from './services/inventory.service';
 import type { WorkSheet } from 'xlsx-js-style';
 
 type ModalActivo =
@@ -65,6 +67,18 @@ interface ToastNotification {
   mensaje: string;
 }
 
+interface EditorComponente {
+  puestoId: string;
+  id: string;
+  tipo: TipoPeriferico;
+  marca: string;
+  modelo: string;
+  especificacion: string;
+  numeroSerie: string;
+  codigoSeguimiento: string;
+  motivo: string;
+}
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -99,6 +113,9 @@ export class App implements OnDestroy {
   readonly usuarioParaRestablecer = signal<string | null>(null);
   readonly nuevaContrasena = signal('');
   readonly usuarioRestableciendo = signal<string | null>(null);
+  readonly componenteEnEdicion = signal<EditorComponente | null>(null);
+  readonly errorEdicionComponente = signal('');
+  readonly guardandoEdicionComponente = signal(false);
 
   constructor() {
     void this.inicializarSesion();
@@ -367,6 +384,20 @@ export class App implements OnDestroy {
     'RAM',
     'ALMACENAMIENTO',
     'GABINETE',
+  ];
+  readonly tiposPerifericosCompletos: TipoPeriferico[] = [
+    'PROCESADOR',
+    'RAM',
+    'DISCO_HDD',
+    'DISCO_SSD',
+    'ALMACENAMIENTO',
+    'GABINETE',
+    'MONITOR',
+    'TECLADO',
+    'MOUSE',
+    'SCANNER',
+    'IMPRESORA',
+    'OTRO',
   ];
   readonly puestoEtiquetasId = signal<string | null>(null);
   readonly puestoEtiquetas = computed(
@@ -707,6 +738,90 @@ export class App implements OnDestroy {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo agregar el componente.',
       );
+    }
+  }
+
+  abrirEdicionComponente(puestoId: string, componente: ComponentePuesto): void {
+    if (this.authService.user()?.role !== 'admin') {
+      this.mostrarToast('Solo una persona administradora puede editar componentes.', 'error');
+      return;
+    }
+    this.componenteEnEdicion.set({
+      puestoId,
+      id: componente.id,
+      tipo: componente.tipo,
+      marca: componente.marca,
+      modelo: componente.modelo ?? '',
+      especificacion: componente.especificacion,
+      numeroSerie: componente.numeroSerie ?? '',
+      codigoSeguimiento: componente.codigoSeguimiento ?? '',
+      motivo: '',
+    });
+    this.errorEdicionComponente.set('');
+  }
+
+  actualizarCampoEdicionComponente(
+    campo: 'marca' | 'modelo' | 'especificacion' | 'numeroSerie' | 'codigoSeguimiento' | 'motivo',
+    valor: string,
+  ): void {
+    this.componenteEnEdicion.update((componente) =>
+      componente ? { ...componente, [campo]: valor } : null,
+    );
+    this.errorEdicionComponente.set('');
+  }
+
+  actualizarTipoEdicionComponente(tipo: TipoPeriferico): void {
+    if (!this.tiposPerifericosCompletos.includes(tipo)) return;
+    this.componenteEnEdicion.update((componente) => (componente ? { ...componente, tipo } : null));
+    this.errorEdicionComponente.set('');
+  }
+
+  cerrarEdicionComponente(): void {
+    if (this.guardandoEdicionComponente()) return;
+    this.componenteEnEdicion.set(null);
+    this.errorEdicionComponente.set('');
+  }
+
+  async guardarEdicionComponente(): Promise<void> {
+    const componente = this.componenteEnEdicion();
+    if (!componente || this.authService.user()?.role !== 'admin') return;
+
+    const marca = componente.marca.trim();
+    const modelo = componente.modelo.trim();
+    const especificacion = componente.especificacion.trim();
+    const numeroSerie = componente.numeroSerie.trim();
+    const codigoSeguimiento = componente.codigoSeguimiento.trim();
+    const motivo = componente.motivo.trim();
+    if (!marca || !especificacion || !motivo) {
+      this.errorEdicionComponente.set('Completá marca, especificación y motivo de la corrección.');
+      return;
+    }
+
+    this.guardandoEdicionComponente.set(true);
+    this.errorEdicionComponente.set('');
+    const cambios: ComponentEdit = {
+      tipo: componente.tipo,
+      marca,
+      ...(modelo ? { modelo } : {}),
+      especificacion,
+      ...(numeroSerie ? { numeroSerie } : {}),
+      ...(codigoSeguimiento ? { codigoSeguimiento } : {}),
+    };
+    try {
+      await this.inventoryService.editarComponenteAdministrativamente(
+        componente.puestoId,
+        componente.id,
+        cambios,
+        motivo,
+      );
+      this.componenteEnEdicion.set(null);
+      this.mostrarToast('Se corrigieron los datos del componente y se registró la auditoría.');
+    } catch (error: unknown) {
+      this.errorEdicionComponente.set(
+        error instanceof Error ? error.message : 'No se pudo actualizar el componente.',
+      );
+    } finally {
+      this.guardandoEdicionComponente.set(false);
     }
   }
 

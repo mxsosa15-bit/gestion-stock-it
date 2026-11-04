@@ -31,6 +31,8 @@ export interface InventoryData {
   historial: HistorialMovimiento[];
 }
 
+export type ComponentEdit = Omit<ComponentePuesto, 'id'>;
+
 export interface InventoryBackup {
   format: 'gestion-it-backup';
   version: 1;
@@ -120,6 +122,45 @@ export class InventoryService {
       const message = this.obtenerMensajeError(
         error,
         'No se pudieron guardar los cambios en el servidor.',
+      );
+      this.errorServidor.set(message);
+      throw new Error(message);
+    }
+  }
+
+  async editarComponenteAdministrativamente(
+    puestoId: string,
+    componenteId: string,
+    changes: ComponentEdit,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.http.patch<InventoryResponse>(
+          `/api/inventory/puestos/${encodeURIComponent(puestoId)}/componentes/${encodeURIComponent(componenteId)}`,
+          { revision: this.revision, changes, reason },
+        ),
+      );
+      this.revision = Number(response.revision);
+      this.aplicarInventario(response.payload);
+      this.persistedSnapshot = this.obtenerInventario();
+      this.errorServidor.set('');
+    } catch (error: unknown) {
+      const remote = error instanceof HttpErrorResponse ? error.error : null;
+      if (
+        error instanceof HttpErrorResponse &&
+        error.status === 409 &&
+        remote &&
+        typeof remote.revision === 'string' &&
+        this.esInventario(remote.payload)
+      ) {
+        this.revision = Number(remote.revision);
+        this.aplicarInventario(remote.payload);
+        this.persistedSnapshot = this.obtenerInventario();
+      }
+      const message = this.obtenerMensajeError(
+        error,
+        'No se pudo actualizar el componente en el servidor.',
       );
       this.errorServidor.set(message);
       throw new Error(message);
@@ -427,9 +468,7 @@ export class InventoryService {
     return puesto;
   }
 
-  async ejecutarTransferencia(
-    transferencia: SolicitudTransferenciaInventario,
-  ): Promise<void> {
+  async ejecutarTransferencia(transferencia: SolicitudTransferenciaInventario): Promise<void> {
     try {
       const response = await firstValueFrom(
         this.http.post<TransferResponse>('/api/transferencias', {
@@ -465,9 +504,7 @@ export class InventoryService {
 
   async listarTransferencias(): Promise<TransferenciaInventario[]> {
     try {
-      return await firstValueFrom(
-        this.http.get<TransferenciaInventario[]>('/api/transferencias'),
-      );
+      return await firstValueFrom(this.http.get<TransferenciaInventario[]>('/api/transferencias'));
     } catch (error: unknown) {
       throw new Error(
         this.obtenerMensajeError(error, 'No se pudo cargar el historial de transferencias.'),

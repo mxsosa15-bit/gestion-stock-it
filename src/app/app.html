@@ -537,6 +537,14 @@
                       <span *ngIf="componente.numeroSerie" class="serial-code"
                         >S/N {{ componente.numeroSerie }}</span
                       >
+                      <button
+                        *ngIf="authService.user()?.role === 'admin'"
+                        type="button"
+                        class="text-button"
+                        (click)="abrirEdicionComponente(ficha.id, componente)"
+                      >
+                        Editar
+                      </button>
                     </li>
                     <li *ngIf="ficha.componentes.length === 0" class="muted-copy">
                       No hay componentes registrados.
@@ -801,7 +809,10 @@
               <div>
                 <span class="eyebrow">MANTENIMIENTO</span>
                 <h2>Taller y scrap</h2>
-                <p>Gestioná las devoluciones de equipos derivados y el estado de componentes retirados.</p>
+                <p>
+                  Gestioná las devoluciones de equipos derivados y el estado de componentes
+                  retirados.
+                </p>
               </div>
               <span class="count-badge">{{ componentesRetirados().length }} componentes</span>
             </section>
@@ -1339,6 +1350,124 @@
   </section>
 
   <section
+    *ngIf="componenteEnEdicion(); let componente"
+    class="modal-backdrop"
+    (click)="cerrarEdicionComponente()"
+  >
+    <article
+      class="dialog form-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="component-edit-title"
+      (click)="$event.stopPropagation()"
+    >
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow">CORRECCIÓN ADMINISTRATIVA</span>
+          <h2 id="component-edit-title">Editar componente</h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Cerrar edición"
+          [disabled]="guardandoEdicionComponente()"
+          (click)="cerrarEdicionComponente()"
+        >
+          ×
+        </button>
+      </header>
+      <p class="dialog-intro">
+        Se conservará el ID interno. El motivo y los valores anteriores y nuevos quedarán
+        registrados en la auditoría.
+      </p>
+      <p *ngIf="errorEdicionComponente()" class="inline-error" role="alert">
+        {{ errorEdicionComponente() }}
+      </p>
+      <div class="form-fields">
+        <label class="field-full">ID interno<input [ngModel]="componente.id" disabled /></label>
+        <label
+          >Tipo
+          <select
+            [ngModel]="componente.tipo"
+            (ngModelChange)="actualizarTipoEdicionComponente($event)"
+          >
+            <option *ngFor="let tipo of tiposPerifericosCompletos" [ngValue]="tipo">
+              {{ tipo }}
+            </option>
+          </select>
+        </label>
+        <label
+          >Marca
+          <input
+            [ngModel]="componente.marca"
+            (ngModelChange)="actualizarCampoEdicionComponente('marca', $event)"
+            maxlength="120"
+          />
+        </label>
+        <label
+          >Modelo
+          <input
+            [ngModel]="componente.modelo"
+            (ngModelChange)="actualizarCampoEdicionComponente('modelo', $event)"
+            maxlength="120"
+          />
+        </label>
+        <label
+          >Especificación
+          <input
+            [ngModel]="componente.especificacion"
+            (ngModelChange)="actualizarCampoEdicionComponente('especificacion', $event)"
+            maxlength="500"
+          />
+        </label>
+        <label
+          >Número de serie
+          <input
+            [ngModel]="componente.numeroSerie"
+            (ngModelChange)="actualizarCampoEdicionComponente('numeroSerie', $event)"
+            maxlength="120"
+          />
+        </label>
+        <label *ngIf="tiposPerifericosExternos.includes(componente.tipo)"
+          >Código de seguimiento
+          <input
+            [ngModel]="componente.codigoSeguimiento"
+            (ngModelChange)="actualizarCampoEdicionComponente('codigoSeguimiento', $event)"
+            maxlength="100"
+          />
+        </label>
+        <label class="field-full"
+          >Motivo de la corrección
+          <input
+            [ngModel]="componente.motivo"
+            (ngModelChange)="actualizarCampoEdicionComponente('motivo', $event)"
+            maxlength="500"
+            required
+          />
+        </label>
+      </div>
+      <footer class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="guardandoEdicionComponente()"
+          (click)="cerrarEdicionComponente()"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          class="primary-button"
+          [disabled]="guardandoEdicionComponente()"
+          (click)="guardarEdicionComponente()"
+        >
+          {{ guardandoEdicionComponente() ? 'Guardando…' : 'Guardar corrección' }}
+        </button>
+      </footer>
+    </article>
+  </section>
+
+  <section
     *ngIf="reemplazoModalAbierto()"
     class="modal-backdrop replacement-backdrop"
     (click)="cerrarReemplazo()"
@@ -1392,12 +1521,15 @@
             >
               <option value="">Elegir equipo saliente</option>
               <option *ngFor="let componente of componentesDelReemplazo()" [value]="componente.id">
-                {{ componente.tipo }} · {{ componente.marca }}
-                {{ componente.modelo || '' }} · {{ componente.especificacion }}
+                {{ componente.tipo }} · {{ componente.marca }} {{ componente.modelo || '' }} ·
+                {{ componente.especificacion }}
               </option>
             </select>
           </label>
-          <div *ngIf="componenteSaliente(); let componente; else sinComponenteSeleccionado" class="replacement-asset">
+          <div
+            *ngIf="componenteSaliente(); let componente; else: sinComponenteSeleccionado"
+            class="replacement-asset"
+          >
             <span class="replacement-type">{{ componente.tipo }}</span>
             <strong>{{ componente.marca }} {{ componente.modelo || '' }}</strong>
             <span>{{ componente.especificacion }}</span>
@@ -1425,7 +1557,9 @@
             </select>
           </label>
           <label>
-            <span>Detalle {{ reemplazoMotivoTipo() === 'Otro' ? '(obligatorio)' : '(opcional)' }}</span>
+            <span
+              >Detalle {{ reemplazoMotivoTipo() === 'Otro' ? '(obligatorio)' : '(opcional)' }}</span
+            >
             <textarea
               rows="2"
               maxlength="450"
@@ -1467,7 +1601,7 @@
             </datalist>
           </label>
           <div
-            *ngIf="insumoEntrante(); let insumo; else sinStockSeleccionado"
+            *ngIf="insumoEntrante(); let insumo; else: sinStockSeleccionado"
             class="replacement-asset"
           >
             <span class="replacement-type">{{ insumo.tipo }}</span>
@@ -1498,10 +1632,12 @@
         <p>
           Se retirará <b>{{ componenteSaliente()?.tipo }} · {{ componenteSaliente()?.marca }}</b>
           del puesto y se instalará
-          <b>{{ insumoEntrante()?.tipo }} · {{ insumoEntrante()?.marca }}</b>.
-          El stock de este último disminuirá en una unidad.
+          <b>{{ insumoEntrante()?.tipo }} · {{ insumoEntrante()?.marca }}</b
+          >. El stock de este último disminuirá en una unidad.
         </p>
-        <p>Motivo registrado: <strong>{{ motivoReemplazo() }}</strong></p>
+        <p>
+          Motivo registrado: <strong>{{ motivoReemplazo() }}</strong>
+        </p>
       </div>
 
       <label class="replacement-confirmation">

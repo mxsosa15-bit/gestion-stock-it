@@ -1,10 +1,12 @@
 import { TestBed } from '@angular/core/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { Area, Piso, PuestoTrabajo, StockInsumo } from '../models/inventory.model';
 import { InventoryService } from './inventory.service';
 
 describe('InventoryService', () => {
   let service: InventoryService;
+  let httpTesting: HttpTestingController;
 
   const stock: StockInsumo[] = [
     {
@@ -36,9 +38,10 @@ describe('InventoryService', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [InventoryService, provideHttpClient()],
+      providers: [InventoryService, provideHttpClient(), provideHttpClientTesting()],
     });
     service = TestBed.inject(InventoryService);
+    httpTesting = TestBed.inject(HttpTestingController);
     service.stock.set(stock);
     service.puestos.set(puestos);
     service.areas.set([{ id: 'area-1', pisoId: 'piso-1', nombre: 'Cajas' } satisfies Area]);
@@ -46,6 +49,65 @@ describe('InventoryService', () => {
     service.equiposRed.set([]);
     service.componentesRetirados.set([]);
     service.historial.set([]);
+  });
+
+  afterEach(() => httpTesting.verify());
+
+  it('updates component fields through the administrative endpoint and preserves the ID', async () => {
+    const savedInventory = {
+      pisos: [],
+      areas: [],
+      personas: [],
+      stock: [],
+      puestos: [
+        {
+          ...puestos[0]!,
+          componentes: [
+            {
+              id: 'hdd-1',
+              tipo: 'DISCO_HDD',
+              marca: 'Western Digital',
+              especificacion: '2TB HDD',
+              numeroSerie: 'SN-2',
+            },
+          ],
+        },
+      ],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+    const edit = service.editarComponenteAdministrativamente(
+      'puesto-1',
+      'hdd-1',
+      {
+        tipo: 'DISCO_HDD',
+        marca: 'Western Digital',
+        especificacion: '2TB HDD',
+        numeroSerie: 'SN-2',
+      },
+      'Corrección de carga',
+    );
+    const request = httpTesting.expectOne('/api/inventory/puestos/puesto-1/componentes/hdd-1');
+    expect(request.request.method).toBe('PATCH');
+    expect(request.request.body).toEqual({
+      revision: 0,
+      changes: {
+        tipo: 'DISCO_HDD',
+        marca: 'Western Digital',
+        especificacion: '2TB HDD',
+        numeroSerie: 'SN-2',
+      },
+      reason: 'Corrección de carga',
+    });
+    request.flush({ revision: '1', payload: savedInventory });
+    await edit;
+
+    expect(service.puestos()[0]?.componentes[0]).toMatchObject({
+      id: 'hdd-1',
+      especificacion: '2TB HDD',
+      numeroSerie: 'SN-2',
+    });
   });
 
   it('replaces a workstation component, deducts stock, and records the movement', () => {
@@ -69,8 +131,9 @@ describe('InventoryService', () => {
       cantidad: 1,
     });
     expect(service.historial()[0]?.fecha).toBeInstanceOf(Date);
-    expect(service.historial().find((movimiento) => movimiento.tipo === 'REEMPLAZO_PUESTO')?.detalle)
-      .toContain('Motivo: Falla: disco ruidoso.');
+    expect(
+      service.historial().find((movimiento) => movimiento.tipo === 'REEMPLAZO_PUESTO')?.detalle,
+    ).toContain('Motivo: Falla: disco ruidoso.');
     expect(service.componentesRetirados()).toHaveLength(1);
     expect(service.componentesRetirados()[0]).toMatchObject({
       puestoId: 'puesto-1',

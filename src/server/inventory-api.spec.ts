@@ -1,9 +1,23 @@
 import {
+  areExistingComponentsUnchanged,
   createLoginFailureKey,
   normalizeSnapshot,
+  parseComponentEdit,
   parsePasswordReset,
   type InventorySnapshot,
 } from './inventory-api';
+
+function snapshotWithComponent(component: Record<string, unknown>): InventorySnapshot {
+  return {
+    pisos: [],
+    areas: [],
+    stock: [],
+    puestos: [{ id: 'puesto-1', componentes: [component] }],
+    equiposRed: [],
+    componentesRetirados: [],
+    historial: [],
+  };
+}
 
 describe('normalizeSnapshot', () => {
   it('generates unique tracking codes on the server only for trackable inventory', () => {
@@ -44,6 +58,95 @@ describe('normalizeSnapshot', () => {
     expect(new Set(codes).size).toBe(codes.length);
     expect(ram).not.toHaveProperty('codigoSeguimiento');
     expect(result.stock[1]).not.toHaveProperty('codigoSeguimiento');
+  });
+});
+
+describe('parseComponentEdit', () => {
+  it('accepts and trims editable component fields without accepting an ID', () => {
+    expect(
+      parseComponentEdit({
+        tipo: 'MONITOR',
+        marca: ' Dell ',
+        modelo: ' P2422H ',
+        especificacion: ' 24 pulgadas ',
+        numeroSerie: ' SN-1 ',
+        codigoSeguimiento: ' COMP-1 ',
+      }),
+    ).toEqual({
+      tipo: 'MONITOR',
+      marca: 'Dell',
+      modelo: 'P2422H',
+      especificacion: '24 pulgadas',
+      numeroSerie: 'SN-1',
+      codigoSeguimiento: 'COMP-1',
+    });
+    expect(
+      parseComponentEdit({
+        id: 'otro-id',
+        tipo: 'MONITOR',
+        marca: 'Dell',
+        especificacion: '24 pulgadas',
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects invalid component types and incomplete required values', () => {
+    expect(
+      parseComponentEdit({ tipo: 'INVENTED', marca: 'Dell', especificacion: '24' }),
+    ).toBeNull();
+    expect(parseComponentEdit({ tipo: 'MONITOR', marca: ' ', especificacion: '24' })).toBeNull();
+  });
+});
+
+describe('areExistingComponentsUnchanged', () => {
+  const component = { id: 'component-1', tipo: 'MONITOR', marca: 'Dell', especificacion: '24' };
+
+  it('rejects edits to existing component fields even when the ID is unchanged', () => {
+    expect(
+      areExistingComponentsUnchanged(
+        snapshotWithComponent(component),
+        snapshotWithComponent({ ...component, marca: 'Lenovo' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('allows additions and permits deletion only for administrators', () => {
+    const emptySnapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [],
+      puestos: [{ id: 'puesto-1', componentes: [] }],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+    expect(
+      areExistingComponentsUnchanged(
+        emptySnapshot,
+        snapshotWithComponent({ id: 'new-component', tipo: 'MONITOR' }),
+      ),
+    ).toBe(true);
+    expect(areExistingComponentsUnchanged(snapshotWithComponent(component), emptySnapshot)).toBe(
+      false,
+    );
+    expect(
+      areExistingComponentsUnchanged(snapshotWithComponent(component), emptySnapshot, true),
+    ).toBe(true);
+  });
+
+  it('allows retiring an existing component without changing its data', () => {
+    const retiredSnapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [],
+      puestos: [{ id: 'puesto-1', componentes: [] }],
+      equiposRed: [],
+      componentesRetirados: [{ id: 'retired-1', componente: component }],
+      historial: [],
+    };
+    expect(areExistingComponentsUnchanged(snapshotWithComponent(component), retiredSnapshot)).toBe(
+      true,
+    );
   });
 });
 

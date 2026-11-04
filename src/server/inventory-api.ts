@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import express, { type Request, type Response } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
@@ -20,6 +21,15 @@ export interface InventorySnapshot {
 interface StoredSnapshot {
   revision: string;
   payload: InventorySnapshot;
+}
+
+export interface ComponentEdit {
+  tipo: string;
+  marca: string;
+  modelo?: string;
+  especificacion: string;
+  numeroSerie?: string;
+  codigoSeguimiento?: string;
 }
 
 const externalTypes = new Set(['MONITOR', 'TECLADO', 'MOUSE', 'IMPRESORA', 'SCANNER']);
@@ -99,6 +109,90 @@ function isInventorySnapshot(value: unknown): value is InventorySnapshot {
   );
 }
 
+export function parseComponentEdit(value: unknown): ComponentEdit | null {
+  if (!isRecord(value)) return null;
+  const allowedFields = new Set([
+    'tipo',
+    'marca',
+    'modelo',
+    'especificacion',
+    'numeroSerie',
+    'codigoSeguimiento',
+  ]);
+  if (!Object.keys(value).every((key) => allowedFields.has(key))) return null;
+
+  const tipo = value['tipo'];
+  const marca = value['marca'];
+  const modelo = value['modelo'] ?? '';
+  const especificacion = value['especificacion'];
+  const numeroSerie = value['numeroSerie'] ?? '';
+  const codigoSeguimiento = value['codigoSeguimiento'] ?? '';
+  if (
+    typeof tipo !== 'string' ||
+    !peripheralTypes.has(tipo) ||
+    typeof marca !== 'string' ||
+    !marca.trim() ||
+    marca.trim().length > 120 ||
+    typeof modelo !== 'string' ||
+    modelo.trim().length > 120 ||
+    typeof especificacion !== 'string' ||
+    !especificacion.trim() ||
+    especificacion.trim().length > 500 ||
+    typeof numeroSerie !== 'string' ||
+    numeroSerie.trim().length > 120 ||
+    typeof codigoSeguimiento !== 'string' ||
+    codigoSeguimiento.trim().length > 100
+  ) {
+    return null;
+  }
+
+  return {
+    tipo,
+    marca: marca.trim(),
+    ...(modelo.trim() ? { modelo: modelo.trim() } : {}),
+    especificacion: especificacion.trim(),
+    ...(numeroSerie.trim() ? { numeroSerie: numeroSerie.trim() } : {}),
+    ...(codigoSeguimiento.trim() ? { codigoSeguimiento: codigoSeguimiento.trim() } : {}),
+  };
+}
+
+function componentesPorId(snapshot: InventorySnapshot): Map<string, Record<string, unknown>> {
+  const componentes = new Map<string, Record<string, unknown>>();
+  for (const puesto of snapshot.puestos) {
+    if (!Array.isArray(puesto['componentes'])) continue;
+    for (const value of puesto['componentes']) {
+      if (isRecord(value) && typeof value['id'] === 'string') {
+        componentes.set(value['id'], value);
+      }
+    }
+  }
+  for (const value of snapshot.componentesRetirados) {
+    if (!isRecord(value) || !isRecord(value['componente'])) continue;
+    const componente = value['componente'];
+    if (typeof componente['id'] === 'string') {
+      componentes.set(componente['id'], componente);
+    }
+  }
+  return componentes;
+}
+
+export function areExistingComponentsUnchanged(
+  current: InventorySnapshot,
+  proposed: InventorySnapshot,
+  allowRemoval = false,
+): boolean {
+  const proposedComponents = componentesPorId(proposed);
+  for (const [id, component] of componentesPorId(current)) {
+    const proposedComponent = proposedComponents.get(id);
+    if (!proposedComponent) {
+      if (allowRemoval) continue;
+      return false;
+    }
+    if (!isDeepStrictEqual(component, proposedComponent)) return false;
+  }
+  return true;
+}
+
 async function syncInventoryAreas(client: PoolClient, snapshot: InventorySnapshot): Promise<void> {
   await client.query(
     'UPDATE gestion_it.areas SET activo = false WHERE inventory_area_id IS NOT NULL',
@@ -132,9 +226,8 @@ export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapsho
     personas:
       snapshot.personas ??
       snapshot.puestos.flatMap((puesto) => {
-        const name = typeof puesto['usuarioAsignado'] === 'string'
-          ? puesto['usuarioAsignado'].trim()
-          : '';
+        const name =
+          typeof puesto['usuarioAsignado'] === 'string' ? puesto['usuarioAsignado'].trim() : '';
         const id = typeof puesto['id'] === 'string' ? puesto['id'] : '';
         const areaId = typeof puesto['areaId'] === 'string' ? puesto['areaId'] : '';
         return name && id && areaId
@@ -476,6 +569,17 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
 
+      const admin = isAdmin(request);
+      if (!areExistingComponentsUnchanged(currentRow.payload, payload, admin)) {
+        await client.query('ROLLBACK');
+        response.status(admin ? 400 : 403).json({
+          error: admin
+            ? 'Para editar los datos de un componente, usá la edición administrativa del componente.'
+            : 'Solo una persona administradora puede editar o eliminar componentes existentes.',
+        });
+        return;
+      }
+
       const normalized = normalizeSnapshot(payload);
       if (!hasUniqueTrackingCodes(normalized)) {
         response
@@ -502,6 +606,133 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       client.release();
     }
   });
+
+  router.patch(
+    '/inventory/puestos/:puestoId/componentes/:componenteId',
+    requireAdministrator,
+    async (request, response, next) => {
+      const { revision, changes, reason } = request.body ?? {};
+      const edit = parseComponentEdit(changes);
+      const motivo = typeof reason === 'string' ? reason.trim() : '';
+      if (!Number.isSafeInteger(revision) || !edit || !motivo || motivo.length > 500) {
+        response.status(400).json({ error: 'Los datos de edición del componente son inválidos.' });
+        return;
+      }
+
+      const actor = request.session.user;
+      if (!actor) {
+        response.status(401).json({ error: 'Iniciá sesión para continuar.' });
+        return;
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const current = await client.query<StoredSnapshot>(
+          'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true FOR UPDATE',
+        );
+        const currentRow = current.rows[0];
+        if (!currentRow) throw new Error('No existe el estado inicial del inventario.');
+        if (Number(currentRow.revision) !== revision) {
+          await client.query('ROLLBACK');
+          response.status(409).json({
+            error:
+              'Otro usuario modificó el inventario. Se recargaron los datos más recientes; volvé a intentar la operación.',
+            revision: currentRow.revision,
+            payload: currentRow.payload,
+          });
+          return;
+        }
+
+        const puestoId = request.params['puestoId'];
+        const componenteId = request.params['componenteId'];
+        const puesto = currentRow.payload.puestos.find((item) => item['id'] === puestoId);
+        const componente =
+          puesto && Array.isArray(puesto['componentes'])
+            ? (puesto['componentes'] as unknown[]).find(
+                (item) => isRecord(item) && item['id'] === componenteId,
+              )
+            : undefined;
+        if (!puesto || !isRecord(componente)) {
+          await client.query('ROLLBACK');
+          response.status(404).json({ error: 'No se encontró el componente en ese puesto.' });
+          return;
+        }
+
+        const before = { ...componente };
+        const after = { id: componente['id'], ...edit };
+        const proposed: InventorySnapshot = {
+          ...currentRow.payload,
+          puestos: currentRow.payload.puestos.map((item) =>
+            item['id'] === puestoId
+              ? {
+                  ...item,
+                  componentes: (item['componentes'] as unknown[]).map((value) =>
+                    isRecord(value) && value['id'] === componenteId ? after : value,
+                  ),
+                }
+              : item,
+          ),
+        };
+        const normalized = normalizeSnapshot(proposed);
+        if (!hasUniqueTrackingCodes(normalized)) {
+          await client.query('ROLLBACK');
+          response.status(400).json({
+            error: 'El código de seguimiento ya está asignado a otro elemento.',
+          });
+          return;
+        }
+
+        const updatedPuesto = normalized.puestos.find((item) => item['id'] === puestoId);
+        const updatedComponent =
+          updatedPuesto && Array.isArray(updatedPuesto['componentes'])
+            ? (updatedPuesto['componentes'] as Record<string, unknown>[]).find(
+                (item) => item['id'] === componenteId,
+              )
+            : undefined;
+        if (!updatedComponent) throw new Error('No se pudo actualizar el componente.');
+
+        const beforeData = { ...before };
+        delete beforeData['id'];
+        const afterData = { ...updatedComponent };
+        delete afterData['id'];
+        if (isDeepStrictEqual(beforeData, afterData)) {
+          await client.query('ROLLBACK');
+          response.status(400).json({ error: 'No hay cambios para guardar en el componente.' });
+          return;
+        }
+
+        const saved = await client.query<StoredSnapshot>(
+          `UPDATE gestion_it.inventory_snapshot
+           SET payload = $1::jsonb, revision = revision + 1, updated_at = now()
+           WHERE singleton_id = true
+           RETURNING revision::text, payload`,
+          [JSON.stringify(normalized)],
+        );
+        await client.query(
+          `INSERT INTO gestion_it.inventory_component_edits
+             (component_id, puesto_id, changed_by, changed_by_username, reason, before_data, after_data)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+          [
+            componenteId,
+            puestoId,
+            actor.id,
+            actor.username,
+            motivo,
+            JSON.stringify(beforeData),
+            JSON.stringify(afterData),
+          ],
+        );
+        await client.query('COMMIT');
+        response.json(saved.rows[0]);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+      } finally {
+        client.release();
+      }
+    },
+  );
 
   router.post('/inventory/import', requireUser, async (request, response, next) => {
     if (!isAdmin(request)) {
