@@ -21,6 +21,7 @@ import { ReadOnlyDashboardComponent } from './components/read-only-dashboard/rea
 import { OperationsDashboardComponent } from './components/operations-dashboard/operations-dashboard.component';
 import { WorkshopTicketsComponent } from './components/workshop-tickets/workshop-tickets.component';
 import { InventoryTransfersComponent } from './components/inventory-transfers/inventory-transfers.component';
+import { OperatorAuditComponent } from './components/operator-audit/operator-audit.component';
 import {
   EquipoRed,
   EstadoComponenteRetirado,
@@ -52,7 +53,8 @@ type VistaActiva =
   | 'TALLER'
   | 'PATRIMONIO'
   | 'TICKETS'
-  | 'TRANSFERENCIAS';
+  | 'TRANSFERENCIAS'
+  | 'AUDITORIA';
 
 type TipoConfirmacion = 'PUESTO' | 'STOCK' | 'PISO' | 'AREA' | 'RED';
 
@@ -93,6 +95,7 @@ interface EditorComponente {
     OperationsDashboardComponent,
     WorkshopTicketsComponent,
     InventoryTransfersComponent,
+    OperatorAuditComponent,
   ],
   templateUrl: './app.html',
 })
@@ -228,6 +231,7 @@ export class App implements OnDestroy {
       PATRIMONIO: 'Etiquetas de patrimonio',
       TICKETS: 'Reclamos de soporte',
       TRANSFERENCIAS: 'Transferencias y mudanzas',
+      AUDITORIA: 'Auditoría de operadores',
     };
     return titulos[this.vistaActiva()];
   });
@@ -514,6 +518,7 @@ export class App implements OnDestroy {
     if (role === 'solicitante' && vista !== 'TICKETS') return;
     if (role === 'dashboard') return;
     if (vista === 'PATRIMONIO' && role !== 'admin' && role !== 'operator') return;
+    if (vista === 'AUDITORIA' && role !== 'admin') return;
     this.vistaActiva.set(vista);
     this.menuMovilAbierto.set(false);
     if (vista === 'REPORTES' && this.authService.user()?.role === 'admin') {

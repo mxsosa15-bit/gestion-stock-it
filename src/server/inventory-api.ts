@@ -6,6 +6,7 @@ import connectPgSimple from 'connect-pg-simple';
 import type { Pool, PoolClient } from 'pg';
 import { hashPassword, verifyPassword } from './password';
 import { requireRoles, type SessionUser, type SystemRole } from './session-user';
+import { installOperatorAuditMiddleware } from './operator-audit';
 
 export interface InventorySnapshot {
   pisos: unknown[];
@@ -373,6 +374,8 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
     next();
   });
+
+  router.use(installOperatorAuditMiddleware(pool));
 
   router.get('/health', async (_request, response, next) => {
     try {
@@ -812,6 +815,79 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
          ORDER BY u.username`,
       );
       response.json(result.rows);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/admin/operator-audit', requireAdministrator, async (request, response, next) => {
+    const from = typeof request.query['from'] === 'string' ? request.query['from'] : null;
+    const to = typeof request.query['to'] === 'string' ? request.query['to'] : null;
+    const actorId =
+      typeof request.query['actorId'] === 'string' ? request.query['actorId'] : null;
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const isValidDate = (value: string | null): boolean =>
+      value === null ||
+      (datePattern.test(value) &&
+        !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) &&
+        new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value);
+    if (
+      !isValidDate(from) ||
+      !isValidDate(to) ||
+      (from !== null && to !== null && from > to) ||
+      (actorId !== null &&
+        !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId))
+    ) {
+      response.status(400).json({ error: 'Los filtros de auditoría no son válidos.' });
+      return;
+    }
+
+    try {
+      const [operators, summary, events] = await Promise.all([
+        pool.query<{ id: string; username: string; role: string }>(
+          `SELECT id, username, role
+           FROM gestion_it.app_users
+           WHERE role IN ('admin', 'operator')
+           ORDER BY username`,
+        ),
+        pool.query<{
+          actorId: string;
+          username: string;
+          role: string;
+          taskCount: number;
+        }>(
+          `SELECT u.id AS "actorId", u.username, u.role,
+                  count(e.id)::int AS "taskCount"
+           FROM gestion_it.app_users AS u
+           LEFT JOIN gestion_it.operator_audit_events AS e
+             ON e.actor_id = u.id
+            AND ($1::date IS NULL OR e.created_at >= $1::date)
+            AND ($2::date IS NULL OR e.created_at < $2::date + interval '1 day')
+            AND ($3::uuid IS NULL OR e.actor_id = $3::uuid)
+           WHERE u.role IN ('admin', 'operator')
+             AND ($3::uuid IS NULL OR u.id = $3::uuid)
+           GROUP BY u.id, u.username, u.role
+           ORDER BY count(e.id) DESC, u.username`,
+          [from, to, actorId],
+        ),
+        pool.query(
+          `SELECT id, actor_id AS "actorId", actor_username AS "actorUsername",
+                  action, entity_type AS "entityType", entity_id AS "entityId",
+                  entity_name AS "entityName", details, created_at AS "createdAt"
+           FROM gestion_it.operator_audit_events
+           WHERE ($1::date IS NULL OR created_at >= $1::date)
+             AND ($2::date IS NULL OR created_at < $2::date + interval '1 day')
+             AND ($3::uuid IS NULL OR actor_id = $3::uuid)
+           ORDER BY created_at DESC, id DESC
+           LIMIT 500`,
+          [from, to, actorId],
+        ),
+      ]);
+      response.json({
+        operators: operators.rows,
+        summary: summary.rows,
+        events: events.rows,
+      });
     } catch (error) {
       next(error);
     }

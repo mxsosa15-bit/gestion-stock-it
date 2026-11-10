@@ -66,6 +66,14 @@
           <span class="nav-icon">▤</span><span>Dashboard</span>
         </button>
         <button
+          *ngIf="authService.user()?.role === 'admin'"
+          type="button"
+          (click)="cambiarVista('AUDITORIA')"
+          [class.active]="vistaActiva() === 'AUDITORIA'"
+        >
+          <span class="nav-icon">◷</span><span>Auditoría de operadores</span>
+        </button>
+        <button
           *ngIf="
             authService.user()?.role === 'solicitante' ||
             authService.user()?.role === 'admin' ||
@@ -182,6 +190,12 @@
         } @placeholder {
         } @loading (after 100ms) {
           <p class="feedback" role="status">Preparando el dashboard operativo…</p>
+        }
+        @defer (when vistaActiva() === 'AUDITORIA') {
+          <app-operator-audit *ngIf="vistaActiva() === 'AUDITORIA'"></app-operator-audit>
+        } @placeholder {
+        } @loading (after 100ms) {
+          <p class="feedback" role="status">Cargando auditoría de operadores…</p>
         }
         @defer (when vistaActiva() === 'TICKETS') {
           <app-support-tickets *ngIf="vistaActiva() === 'TICKETS'"></app-support-tickets>
