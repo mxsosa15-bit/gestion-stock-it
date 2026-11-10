@@ -1085,7 +1085,14 @@
                 ></span>
                 <div>
                   <strong>{{ movimiento.detalle }}</strong
-                  ><small>{{ movimiento.tipo }}</small>
+                  ><small>
+                    {{ movimiento.tipo }} ·
+                    {{
+                      movimiento.operador
+                        ? 'Operador: ' + movimiento.operador
+                        : 'Operador sin registrar'
+                    }}
+                  </small>
                 </div>
                 <time>{{ movimiento.fecha | date: 'dd/MM/yyyy HH:mm' }}</time>
               </article>

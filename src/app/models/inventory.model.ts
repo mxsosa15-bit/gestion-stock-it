@@ -97,6 +97,8 @@ export interface HistorialMovimiento {
   id: string;
   fecha: Date;
   tipo: TipoMovimiento;
+  operadorId?: string;
+  operador?: string;
   insumoId?: string;
   puestoId?: string;
   equipoRedId?: string;

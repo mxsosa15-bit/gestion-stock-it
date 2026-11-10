@@ -1,4 +1,5 @@
 import {
+  attributeHistoryOperators,
   areExistingComponentsUnchanged,
   createLoginFailureKey,
   normalizeSnapshot,
@@ -58,6 +59,74 @@ describe('normalizeSnapshot', () => {
     expect(new Set(codes).size).toBe(codes.length);
     expect(ram).not.toHaveProperty('codigoSeguimiento');
     expect(result.stock[1]).not.toHaveProperty('codigoSeguimiento');
+  });
+});
+
+describe('attributeHistoryOperators', () => {
+  const actor = {
+    id: 'operator-1',
+    username: 'operador1',
+    role: 'operator' as const,
+    areaId: null,
+    areaNombre: null,
+  };
+
+  it('attributes newly added history entries to the authenticated operator', () => {
+    const snapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [{ id: 'movement-1', detalle: 'Se creó un puesto' }],
+    };
+
+    const result = attributeHistoryOperators({ ...snapshot, historial: [] }, snapshot, actor);
+
+    expect(result.historial[0]).toMatchObject({
+      id: 'movement-1',
+      operadorId: actor.id,
+      operador: actor.username,
+    });
+  });
+
+  it('preserves the original operator and rejects client changes to existing attribution', () => {
+    const current: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [
+        {
+          id: 'movement-1',
+          detalle: 'Se creó un puesto',
+          operadorId: 'original-operator',
+          operador: 'operador-original',
+        },
+      ],
+    };
+    const proposed: InventorySnapshot = {
+      ...current,
+      historial: [
+        {
+          id: 'movement-1',
+          detalle: 'Se creó un puesto',
+          operadorId: 'forged-operator',
+          operador: 'operador-falso',
+        },
+      ],
+    };
+
+    const result = attributeHistoryOperators(current, proposed, actor);
+
+    expect(result.historial[0]).toMatchObject({
+      id: 'movement-1',
+      operadorId: 'original-operator',
+      operador: 'operador-original',
+    });
   });
 });
 

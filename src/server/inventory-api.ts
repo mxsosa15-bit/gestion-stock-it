@@ -268,6 +268,40 @@ export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapsho
   };
 }
 
+export function attributeHistoryOperators(
+  current: InventorySnapshot,
+  proposed: InventorySnapshot,
+  actor: SessionUser,
+): InventorySnapshot {
+  const previousById = new Map(
+    current.historial.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry['id'] !== 'string') return [];
+      return [[entry['id'], entry] as const];
+    }),
+  );
+
+  return {
+    ...proposed,
+    historial: proposed.historial.map((entry) => {
+      if (!isRecord(entry) || typeof entry['id'] !== 'string') return entry;
+
+      const { operador: _operador, operadorId: _operadorId, ...values } = entry;
+      const previous = previousById.get(entry['id']);
+      if (!previous) {
+        return { ...values, operadorId: actor.id, operador: actor.username };
+      }
+
+      return {
+        ...values,
+        ...(typeof previous['operadorId'] === 'string'
+          ? { operadorId: previous['operadorId'] }
+          : {}),
+        ...(typeof previous['operador'] === 'string' ? { operador: previous['operador'] } : {}),
+      };
+    }),
+  };
+}
+
 function hasUniqueTrackingCodes(snapshot: InventorySnapshot): boolean {
   const codes = [
     ...snapshot.puestos.map((puesto) => String(puesto['codigoSeguimiento'])),
@@ -583,7 +617,17 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
 
-      const normalized = normalizeSnapshot(payload);
+      const actor = request.session.user;
+      if (!actor) {
+        response.status(401).json({ error: 'Iniciá sesión para continuar.' });
+        return;
+      }
+
+      const normalized = attributeHistoryOperators(
+        currentRow.payload,
+        normalizeSnapshot(payload),
+        actor,
+      );
       if (!hasUniqueTrackingCodes(normalized)) {
         response
           .status(400)
