@@ -11,6 +11,13 @@ export interface OperatorAuditEvent {
   details: Record<string, unknown>;
 }
 
+export interface OperatorAuditHistoryEvent extends OperatorAuditEvent {
+  id: string;
+  actorId: string;
+  actorUsername: string;
+  createdAt: string;
+}
+
 interface InventoryChange {
   action: string;
   type: string;
@@ -29,6 +36,47 @@ const inventoryCollections = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function inventoryHistoryAuditEvents(history: unknown): OperatorAuditHistoryEvent[] {
+  if (!Array.isArray(history)) return [];
+
+  return history.flatMap((entry): OperatorAuditHistoryEvent[] => {
+    if (!isRecord(entry)) return [];
+    const id = entry['id'];
+    const actorId = entry['operadorId'];
+    const actorUsername = entry['operador'];
+    const createdAt = entry['fecha'];
+    const type = entry['tipo'];
+    const name = entry['detalle'];
+    const timestamp = typeof createdAt === 'string' ? new Date(createdAt) : null;
+    if (
+      typeof id !== 'string' ||
+      !id ||
+      typeof actorId !== 'string' ||
+      !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId) ||
+      typeof actorUsername !== 'string' ||
+      !actorUsername.trim() ||
+      !timestamp ||
+      Number.isNaN(timestamp.getTime())
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        id: `historial-${id}`,
+        actorId,
+        actorUsername,
+        action: 'Registró un movimiento de inventario',
+        entityType: 'inventario',
+        entityId: null,
+        entityName: typeof name === 'string' ? name : null,
+        details: { tipo: typeof type === 'string' ? type : '' },
+        createdAt: timestamp.toISOString(),
+      },
+    ];
+  });
 }
 
 function recordsById(value: unknown): Map<string, Record<string, unknown>> {

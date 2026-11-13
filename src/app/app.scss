@@ -1095,6 +1095,11 @@ select:disabled {
   padding-bottom: 2px;
 }
 
+.history-more-button {
+  justify-self: center;
+  margin: 8px 0 12px;
+}
+
 .history-item {
   display: flex;
   align-items: flex-start;

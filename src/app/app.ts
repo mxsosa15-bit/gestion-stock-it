@@ -292,6 +292,10 @@ export class App implements OnDestroy {
   puestos = this.inventoryService.puestos;
   stock = this.inventoryService.stock;
   historial = this.inventoryService.historial;
+  readonly movimientosVisibles = signal(10);
+  readonly historialVisible = computed(() =>
+    this.historial().slice(0, this.movimientosVisibles()),
+  );
   pisos = this.inventoryService.pisos;
   areas = this.inventoryService.areas;
   equiposRed = this.inventoryService.equiposRed;
@@ -307,6 +311,12 @@ export class App implements OnDestroy {
       this.historial(),
     ].every((coleccion) => coleccion.length === 0),
   );
+
+  mostrarMasActividad(): void {
+    this.movimientosVisibles.update((cantidad) =>
+      Math.min(cantidad + 10, this.historial().length),
+    );
+  }
 
   // Filtros parque
   readonly vistaParque = signal<'TARJETAS' | 'LISTA'>('TARJETAS');

@@ -7,11 +7,6 @@ import {
   type OperatorTaskSummary,
 } from '../../services/operator-audit.service';
 
-function formatDateInput(date: Date): string {
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return localDate.toISOString().slice(0, 10);
-}
-
 @Component({
   selector: 'app-operator-audit',
   standalone: true,
@@ -21,8 +16,8 @@ function formatDateInput(date: Date): string {
 })
 export class OperatorAuditComponent implements OnInit {
   private readonly auditService = inject(OperatorAuditService);
-  readonly desde = signal(formatDateInput(new Date(Date.now() - 29 * 24 * 60 * 60 * 1000)));
-  readonly hasta = signal(formatDateInput(new Date()));
+  readonly desde = signal('');
+  readonly hasta = signal('');
   readonly operadorId = signal('');
   readonly operadores = signal<OperatorTaskSummary[]>([]);
   readonly operadoresDisponibles = signal<

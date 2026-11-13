@@ -6,7 +6,10 @@ import connectPgSimple from 'connect-pg-simple';
 import type { Pool, PoolClient } from 'pg';
 import { hashPassword, verifyPassword } from './password';
 import { requireRoles, type SessionUser, type SystemRole } from './session-user';
-import { installOperatorAuditMiddleware } from './operator-audit';
+import {
+  installOperatorAuditMiddleware,
+  inventoryHistoryAuditEvents,
+} from './operator-audit';
 
 export interface InventorySnapshot {
   pisos: unknown[];
@@ -887,7 +890,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
 
     try {
-      const [operators, summary, events] = await Promise.all([
+      const [operators, summary, events, inventory] = await Promise.all([
         pool.query<{ id: string; username: string; role: string }>(
           `SELECT id, username, role
            FROM gestion_it.app_users
@@ -926,11 +929,34 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
            LIMIT 500`,
           [from, to, actorId],
         ),
+        pool.query<{ history: unknown }>(
+          `SELECT payload->'historial' AS history
+           FROM gestion_it.inventory_snapshot
+           WHERE singleton_id = true`,
+        ),
       ]);
+      const historyEvents = inventoryHistoryAuditEvents(inventory.rows[0]?.history).filter(
+        (event) =>
+          (!from || event.createdAt.slice(0, 10) >= from) &&
+          (!to || event.createdAt.slice(0, 10) <= to) &&
+          (!actorId || event.actorId === actorId),
+      );
+      const useHistoryFallback = events.rows.length === 0 && historyEvents.length > 0;
+      const fallbackCounts = new Map<string, number>();
+      if (useHistoryFallback) {
+        for (const event of historyEvents) {
+          fallbackCounts.set(event.actorId, (fallbackCounts.get(event.actorId) ?? 0) + 1);
+        }
+      }
       response.json({
         operators: operators.rows,
-        summary: summary.rows,
-        events: events.rows,
+        summary: useHistoryFallback
+          ? summary.rows.map((operator) => ({
+              ...operator,
+              taskCount: fallbackCounts.get(operator.actorId) ?? 0,
+            }))
+          : summary.rows,
+        events: useHistoryFallback ? historyEvents.slice(0, 500) : events.rows,
       });
     } catch (error) {
       next(error);

@@ -1068,13 +1068,16 @@
               <div class="panel-heading">
                 <div>
                   <h3>Actividad del inventario</h3>
-                  <p>Movimientos auditados más recientes</p>
+                  <p>
+                    Mostrando {{ historialVisible().length }} de {{ historial().length }} movimientos
+                    recientes
+                  </p>
                 </div>
               </div>
               <div *ngIf="historial().length === 0" class="empty-inline">
                 Todavía no hay movimientos para mostrar.
               </div>
-              <article *ngFor="let movimiento of historial()" class="history-item">
+              <article *ngFor="let movimiento of historialVisible()" class="history-item">
                 <span
                   class="movement-dot"
                   [class.movement-success]="
@@ -1096,6 +1099,14 @@
                 </div>
                 <time>{{ movimiento.fecha | date: 'dd/MM/yyyy HH:mm' }}</time>
               </article>
+              <button
+                *ngIf="historialVisible().length < historial().length"
+                type="button"
+                class="secondary-button history-more-button"
+                (click)="mostrarMasActividad()"
+              >
+                Mostrar 10 movimientos más
+              </button>
             </section>
           </main>
           @defer (when vistaActiva() === 'PATRIMONIO') {
