@@ -19,6 +19,7 @@ import {
   TipoPeriferico,
   TransferenciaInventario,
 } from '../models/inventory.model';
+import { DEFAULT_SEDE_ID } from '../../shared/locations';
 
 export interface InventoryData {
   pisos: Piso[];
@@ -122,6 +123,35 @@ export class InventoryService {
       const message = this.obtenerMensajeError(
         error,
         'No se pudieron guardar los cambios en el servidor.',
+      );
+      this.errorServidor.set(message);
+      throw new Error(message);
+    }
+  }
+
+  async enviarStockADelegacion(
+    insumoId: string,
+    destinoSedeId: string,
+    cantidad: number,
+    motivo: string,
+  ): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post<InventoryResponse>('/api/inventory/stock-transfers', {
+          insumoId,
+          destinoSedeId,
+          cantidad,
+          motivo,
+        }),
+      );
+      this.revision = Number(response.revision);
+      this.aplicarInventario(response.payload);
+      this.persistedSnapshot = this.obtenerInventario();
+      this.errorServidor.set('');
+    } catch (error: unknown) {
+      const message = this.obtenerMensajeError(
+        error,
+        'No se pudo enviar el stock a la delegación.',
       );
       this.errorServidor.set(message);
       throw new Error(message);
@@ -279,6 +309,12 @@ export class InventoryService {
     return `${prefijo}-${Date.now().toString(36)}-${++this.idSequence}-${uuidv4()}`;
   }
 
+  private sedeDeArea(areaId: string): string {
+    const area = this.areas().find((item) => item.id === areaId);
+    const piso = area ? this.pisos().find((item) => item.id === area.pisoId) : undefined;
+    return piso?.sedeId ?? DEFAULT_SEDE_ID;
+  }
+
   private normalizarComponente(componente: ComponentePuesto): ComponentePuesto {
     return componente;
   }
@@ -296,14 +332,30 @@ export class InventoryService {
       equipoRedId?: string;
       componenteRetiradoId?: string;
       cantidad?: number;
+      sedeId?: string;
     } = {},
   ): void {
+    const puesto = opciones.puestoId
+      ? this.puestos().find((item) => item.id === opciones.puestoId)
+      : undefined;
+    const equipoRed = opciones.equipoRedId
+      ? this.equiposRed().find((item) => item.id === opciones.equipoRedId)
+      : undefined;
+    const insumo = opciones.insumoId
+      ? this.stock().find((item) => item.id === opciones.insumoId)
+      : undefined;
+    const sedeId =
+      opciones.sedeId ??
+      insumo?.sedeId ??
+      (puesto ? this.sedeDeArea(puesto.areaId) : undefined) ??
+      (equipoRed ? this.sedeDeArea(equipoRed.areaId) : undefined);
     const movimiento: HistorialMovimiento = {
       id: this.generarId('hist'),
       fecha: new Date(),
       tipo,
       cantidad: opciones.cantidad ?? 1,
       detalle,
+      ...(sedeId ? { sedeId } : {}),
       ...(opciones.insumoId ? { insumoId: opciones.insumoId } : {}),
       ...(opciones.puestoId ? { puestoId: opciones.puestoId } : {}),
       ...(opciones.equipoRedId ? { equipoRedId: opciones.equipoRedId } : {}),
@@ -314,8 +366,8 @@ export class InventoryService {
     this.historial.update((registros) => [movimiento, ...registros]);
   }
 
-  crearPiso(nombre: string, nivel: number): Piso {
-    const nuevoPiso: Piso = { id: this.generarId('piso'), nombre, nivel };
+  crearPiso(nombre: string, nivel: number, sedeId = DEFAULT_SEDE_ID): Piso {
+    const nuevoPiso: Piso = { id: this.generarId('piso'), nombre, nivel, sedeId };
     this.pisos.update((pisos) => [...pisos, nuevoPiso]);
     return nuevoPiso;
   }
@@ -365,10 +417,11 @@ export class InventoryService {
       codigoSeguimiento: nuevoEquipo.codigoSeguimiento ?? '',
     };
     this.equiposRed.update((equipos) => [...equipos, equipo]);
+    const sedeId = this.sedeDeArea(equipo.areaId);
     this.registrarHistorial(
       'ALTA_EQUIPO_RED',
       `Se registró un ${equipo.tipo} ${equipo.marca} ${equipo.modelo} en el área ${equipo.areaId}.`,
-      { equipoRedId: equipo.id },
+      { equipoRedId: equipo.id, sedeId },
     );
     return equipo;
   }
@@ -378,24 +431,32 @@ export class InventoryService {
     if (!equipo) {
       return;
     }
+    const sedeId = this.sedeDeArea(equipo.areaId);
     this.equiposRed.update((equipos) => equipos.filter((item) => item.id !== equipoRedId));
     this.registrarHistorial(
       'BAJA_EQUIPO_RED',
       `Se eliminó el ${equipo.tipo} ${equipo.marca} ${equipo.modelo} del área ${equipo.areaId}.`,
-      { equipoRedId: equipo.id },
+      { equipoRedId: equipo.id, sedeId },
     );
   }
 
-  agregarInsumoStock(nuevoItem: Omit<StockInsumo, 'id' | 'codigoSeguimiento'>): void {
+  agregarInsumoStock(
+    nuevoItem: Omit<StockInsumo, 'id' | 'codigoSeguimiento'>,
+    sedeId = nuevoItem.sedeId ?? DEFAULT_SEDE_ID,
+  ): void {
     if (!Number.isInteger(nuevoItem.cantidadDisponible) || nuevoItem.cantidadDisponible <= 0) {
       throw new Error('La cantidad a ingresar debe ser un entero mayor que cero.');
+    }
+    if (!Number.isInteger(nuevoItem.stockMinimo) || nuevoItem.stockMinimo < 0) {
+      throw new Error('El stock mínimo debe ser un entero igual o mayor que cero.');
     }
 
     const existente = this.stock().find(
       (insumo) =>
         insumo.tipo === nuevoItem.tipo &&
         insumo.marca === nuevoItem.marca &&
-        insumo.especificacion === nuevoItem.especificacion,
+        insumo.especificacion === nuevoItem.especificacion &&
+        (insumo.sedeId ?? DEFAULT_SEDE_ID) === sedeId,
     );
 
     const idInsumo = existente?.id ?? this.generarId('stk');
@@ -411,14 +472,77 @@ export class InventoryService {
         ),
       );
     } else {
-      const nuevoInsumo = this.normalizarInsumo({ ...nuevoItem, id: idInsumo });
+      const nuevoInsumo = this.normalizarInsumo({ ...nuevoItem, sedeId, id: idInsumo });
       this.stock.update((stock) => [...stock, nuevoInsumo]);
     }
 
     this.registrarHistorial(
       'INGRESO_STOCK',
       `Ingreso de stock: +${nuevoItem.cantidadDisponible} u. de ${nuevoItem.tipo} (${nuevoItem.marca} - ${nuevoItem.especificacion})`,
-      { insumoId: idInsumo, cantidad: nuevoItem.cantidadDisponible },
+      { insumoId: idInsumo, cantidad: nuevoItem.cantidadDisponible, sedeId },
+    );
+  }
+
+  registrarSaldoInicial(
+    nuevoItem: Omit<StockInsumo, 'id' | 'codigoSeguimiento'>,
+    sedeId = nuevoItem.sedeId ?? DEFAULT_SEDE_ID,
+  ): void {
+    if (!Number.isInteger(nuevoItem.cantidadDisponible) || nuevoItem.cantidadDisponible < 0) {
+      throw new Error('El saldo inicial debe ser un entero igual o mayor que cero.');
+    }
+    if (!Number.isInteger(nuevoItem.stockMinimo) || nuevoItem.stockMinimo < 0) {
+      throw new Error('El stock mínimo debe ser un entero igual o mayor que cero.');
+    }
+    const existente = this.stock().find(
+      (insumo) =>
+        insumo.tipo === nuevoItem.tipo &&
+        insumo.marca === nuevoItem.marca &&
+        insumo.especificacion === nuevoItem.especificacion &&
+        (insumo.sedeId ?? DEFAULT_SEDE_ID) === sedeId,
+    );
+    if (existente) {
+      throw new Error(
+        'Ese producto ya tiene saldo en esta sede. Usá Ajustar inventario para corregirlo.',
+      );
+    }
+
+    const insumo = this.normalizarInsumo({
+      ...nuevoItem,
+      sedeId,
+      id: this.generarId('stk'),
+    });
+    this.stock.update((stock) => [...stock, insumo]);
+    this.registrarHistorial(
+      'SALDO_INICIAL',
+      `Saldo inicial: ${nuevoItem.cantidadDisponible} u. de ${nuevoItem.tipo} (${nuevoItem.marca} - ${nuevoItem.especificacion}).`,
+      { insumoId: insumo.id, cantidad: nuevoItem.cantidadDisponible, sedeId },
+    );
+  }
+
+  ajustarStock(insumoId: string, cantidadFinal: number, motivo: string): void {
+    const insumo = this.stock().find((item) => item.id === insumoId);
+    if (!insumo) throw new Error('No se encontró el producto que querés ajustar.');
+    if (!Number.isInteger(cantidadFinal) || cantidadFinal < 0) {
+      throw new Error('La cantidad real debe ser un entero igual o mayor que cero.');
+    }
+    const motivoValidado = motivo.trim();
+    if (!motivoValidado || motivoValidado.length > 500) {
+      throw new Error('Indicá un motivo de ajuste de hasta 500 caracteres.');
+    }
+    const diferencia = cantidadFinal - insumo.cantidadDisponible;
+    if (diferencia === 0) {
+      throw new Error('La cantidad real coincide con el saldo actual; no hace falta ajustar.');
+    }
+
+    this.stock.update((items) =>
+      items.map((item) =>
+        item.id === insumoId ? { ...item, cantidadDisponible: cantidadFinal } : item,
+      ),
+    );
+    this.registrarHistorial(
+      'AJUSTE_STOCK',
+      `Ajuste de ${insumo.tipo} (${insumo.marca} - ${insumo.especificacion}): ${insumo.cantidadDisponible} → ${cantidadFinal} u. Motivo: ${motivoValidado}.`,
+      { insumoId, cantidad: diferencia, sedeId: insumo.sedeId ?? DEFAULT_SEDE_ID },
     );
   }
 
@@ -432,8 +556,11 @@ export class InventoryService {
     },
   ): PuestoTrabajo {
     const assignedName = nuevoPuesto.usuarioAsignado.trim();
+    const sedeId = this.sedeDeArea(nuevoPuesto.areaId);
     const existingPerson = this.personas().find(
-      (persona) => persona.nombre.trim().toLocaleLowerCase() === assignedName.toLocaleLowerCase(),
+      (persona) =>
+        persona.nombre.trim().toLocaleLowerCase() === assignedName.toLocaleLowerCase() &&
+        this.sedeDeArea(persona.areaId) === sedeId,
     );
     if (assignedName && existingPerson) {
       throw new Error(
@@ -543,6 +670,7 @@ export class InventoryService {
     if (!puesto) {
       return;
     }
+    const sedeId = this.sedeDeArea(puesto.areaId);
 
     this.puestos.update((puestos) => puestos.filter((item) => item.id !== puestoId));
     this.personas.update((personas) =>
@@ -553,7 +681,7 @@ export class InventoryService {
     this.registrarHistorial(
       'BAJA_PUESTO',
       `Se eliminó el puesto ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado})`,
-      { puestoId, cantidad: 1 },
+      { puestoId, cantidad: 1, sedeId },
     );
   }
 
@@ -572,6 +700,9 @@ export class InventoryService {
     const insumo = this.stock().find((item) => item.id === insumoStockId);
     if (!insumo || insumo.cantidadDisponible <= 0) {
       throw new Error('No hay suficiente stock disponible de este insumo.');
+    }
+    if ((insumo.sedeId ?? DEFAULT_SEDE_ID) !== this.sedeDeArea(puesto.areaId)) {
+      throw new Error('El repuesto seleccionado pertenece a otra sede.');
     }
     const componenteActual = puesto.componentes.find(
       (componente) => componente.id === componenteActualId,
@@ -596,6 +727,7 @@ export class InventoryService {
       componente: componenteActual,
       puestoId: puesto.id,
       puestoNombre: puesto.nombrePuesto,
+      sedeId: this.sedeDeArea(puesto.areaId),
       estado: estadoComponenteRetirado,
       fechaRetiro,
     };
@@ -624,12 +756,16 @@ export class InventoryService {
     this.registrarHistorial(
       'REEMPLAZO_PUESTO',
       `Se instaló ${insumo.tipo} (${insumo.marca} - ${insumo.especificacion}) en ${puesto.nombrePuesto} (Usuario: ${puesto.usuarioAsignado}). Motivo: ${motivoValidado}.`,
-      { insumoId: insumo.id, puestoId: puesto.id },
+      { insumoId: insumo.id, puestoId: puesto.id, sedeId: insumo.sedeId ?? DEFAULT_SEDE_ID },
     );
     this.registrarHistorial(
       'RETIRO_COMPONENTE',
       `Se retiró ${componenteActual.tipo} ${componenteActual.marca} ${componenteActual.especificacion} de ${puesto.nombrePuesto}; estado inicial: ${estadoComponenteRetirado}. Motivo: ${motivoValidado}.`,
-      { puestoId: puesto.id, componenteRetiradoId: retirado.id },
+      {
+        puestoId: puesto.id,
+        componenteRetiradoId: retirado.id,
+        sedeId: this.sedeDeArea(puesto.areaId),
+      },
     );
   }
 
@@ -653,7 +789,11 @@ export class InventoryService {
     this.registrarHistorial(
       'CAMBIO_ESTADO_COMPONENTE',
       `El componente ${retirado.componente.tipo} ${retirado.componente.marca} de ${retirado.puestoNombre} cambió de ${retirado.estado} a ${nuevoEstado}.`,
-      { puestoId: retirado.puestoId, componenteRetiradoId },
+      {
+        puestoId: retirado.puestoId,
+        componenteRetiradoId,
+        sedeId: retirado.sedeId ?? DEFAULT_SEDE_ID,
+      },
     );
   }
 }

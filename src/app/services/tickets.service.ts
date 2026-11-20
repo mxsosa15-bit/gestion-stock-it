@@ -18,6 +18,10 @@ export interface WorkshopTransfer {
   motivo_rechazo: string | null;
   devuelto_at: string | null;
   devuelto_por_nombre: string | null;
+  resultado_equipo: 'MISMO' | 'REEMPLAZO' | 'SIN_DATOS' | null;
+  equipo_devuelto: string | null;
+  identificacion_devuelta: string | null;
+  motivo_reemplazo: string | null;
 }
 
 export interface SupportTicket {
@@ -32,6 +36,8 @@ export interface SupportTicket {
   usuario_id: string;
   usuario_nombre: string;
   area_nombre: string | null;
+  sede_id: string | null;
+  sede_nombre: string | null;
   puesto_afectado_id: string | null;
   nombre_afectado: string | null;
   taller: WorkshopTransfer | null;
@@ -45,6 +51,8 @@ export interface DashboardTicket {
   fecha_creacion: string;
   fecha_resolucion: string | null;
   area_nombre: string | null;
+  sede_id: string | null;
+  sede_nombre: string | null;
   nombre_afectado: string | null;
   taller: Pick<WorkshopTransfer, 'estado' | 'equipo' | 'identificacion'> | null;
 }
@@ -61,6 +69,14 @@ export interface WorkshopTransferInput {
   detalle: string;
 }
 
+export interface WorkshopReturnInput {
+  solucion: string;
+  resultadoEquipo: 'MISMO' | 'REEMPLAZO';
+  equipoDevuelto: string;
+  identificacionDevuelta: string;
+  motivoReemplazo: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketsService {
   private readonly http = inject(HttpClient);
@@ -75,13 +91,9 @@ export class TicketsService {
 
   async listarParaDashboard(): Promise<DashboardTicket[]> {
     try {
-      return await firstValueFrom(
-        this.http.get<DashboardTicket[]>('/api/tickets/dashboard'),
-      );
+      return await firstValueFrom(this.http.get<DashboardTicket[]>('/api/tickets/dashboard'));
     } catch (error: unknown) {
-      throw new Error(
-        this.obtenerMensaje(error, 'No se pudieron cargar los datos del dashboard.'),
-      );
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los datos del dashboard.'));
     }
   }
 
@@ -108,14 +120,10 @@ export class TicketsService {
   async listarPuestosDelArea(areaId: string): Promise<AffectedWorkstation[]> {
     try {
       return await firstValueFrom(
-        this.http.get<AffectedWorkstation[]>(
-          `/api/areas/${encodeURIComponent(areaId)}/puestos`,
-        ),
+        this.http.get<AffectedWorkstation[]>(`/api/areas/${encodeURIComponent(areaId)}/puestos`),
       );
     } catch (error: unknown) {
-      throw new Error(
-        this.obtenerMensaje(error, 'No se pudieron cargar los puestos de tu área.'),
-      );
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los puestos de tu área.'));
     }
   }
 
@@ -182,13 +190,13 @@ export class TicketsService {
   async devolverDesdeTaller(
     ticketId: string,
     transferId: string,
-    solucion: string,
+    workshopReturn: WorkshopReturnInput,
   ): Promise<SupportTicket> {
     try {
       return await firstValueFrom(
         this.http.patch<SupportTicket>(
           `/api/tickets/${encodeURIComponent(ticketId)}/workshop/${encodeURIComponent(transferId)}/return`,
-          { solucion },
+          workshopReturn,
         ),
       );
     } catch (error: unknown) {

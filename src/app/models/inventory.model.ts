@@ -20,6 +20,17 @@ export interface Piso {
   id: string;
   nombre: string;
   nivel: number;
+  sedeId?: string;
+}
+
+export interface Sede {
+  id: string;
+  nombre: string;
+  tipo: 'CENTRAL' | 'DELEGACION';
+  departamento: string;
+  localidad: string;
+  direccion: string;
+  activa: boolean;
 }
 
 export interface Area {
@@ -71,6 +82,7 @@ export interface StockInsumo {
   cantidadDisponible: number;
   stockMinimo: number;
   codigoSeguimiento?: string;
+  sedeId?: string;
 }
 
 export interface ComponenteRetirado {
@@ -78,12 +90,16 @@ export interface ComponenteRetirado {
   componente: ComponentePuesto;
   puestoId: string;
   puestoNombre: string;
+  sedeId?: string;
   estado: EstadoComponenteRetirado;
   fechaRetiro: Date;
 }
 
 export type TipoMovimiento =
+  | 'SALDO_INICIAL'
+  | 'AJUSTE_STOCK'
   | 'INGRESO_STOCK'
+  | 'TRANSFERENCIA_STOCK'
   | 'REEMPLAZO_PUESTO'
   | 'ALTA_PUESTO'
   | 'ALTA_COMPONENTE'
@@ -99,7 +115,10 @@ export interface HistorialMovimiento {
   tipo: TipoMovimiento;
   operadorId?: string;
   operador?: string;
+  sedeId?: string;
+  sedeDestinoId?: string;
   insumoId?: string;
+  insumoDestinoId?: string;
   puestoId?: string;
   equipoRedId?: string;
   componenteRetiradoId?: string;

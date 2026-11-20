@@ -1,0 +1,98 @@
+<main class="page-view">
+  <section class="page-heading">
+    <div>
+      <span class="eyebrow">ACTIVIDAD OPERATIVA</span>
+      <h2>Bitácora de tareas</h2>
+      <p>Registrá el trabajo realizado en {{ sedeNombre() }} independientemente de los reclamos.</p>
+    </div>
+  </section>
+
+  <section class="data-panel task-form-panel">
+    <div class="panel-heading">
+      <div>
+        <h3>Registrar tarea realizada</h3>
+        <p>La fecha y el operador se asignan automáticamente.</p>
+      </div>
+    </div>
+    <form class="task-form" (ngSubmit)="guardar()">
+      <label>
+        Tipo
+        <select [ngModel]="tipo()" (ngModelChange)="tipo.set($event)" name="tipo">
+          <option *ngFor="let opcion of tipos" [ngValue]="opcion">{{ opcion }}</option>
+        </select>
+      </label>
+      <label>
+        Tiempo empleado (minutos, opcional)
+        <input
+          type="number"
+          min="0"
+          max="1440"
+          step="1"
+          [ngModel]="duracionMinutos()"
+          (ngModelChange)="duracionMinutos.set($event === '' ? null : +$event)"
+          name="duracion"
+        />
+      </label>
+      <label class="field-full">
+        Tarea
+        <input
+          [ngModel]="titulo()"
+          (ngModelChange)="titulo.set($event)"
+          name="titulo"
+          maxlength="200"
+          required
+          placeholder="Ej. Instalación de disco sólido"
+        />
+      </label>
+      <label class="field-full">
+        Detalle
+        <textarea
+          [ngModel]="descripcion()"
+          (ngModelChange)="descripcion.set($event)"
+          name="descripcion"
+          maxlength="5000"
+          rows="4"
+          required
+          placeholder="Describí el trabajo realizado y su resultado"
+        ></textarea>
+      </label>
+      <p *ngIf="error()" class="inline-error field-full" role="alert">{{ error() }}</p>
+      <div class="task-form-actions field-full">
+        <button type="submit" class="primary-button" [disabled]="guardando()">
+          {{ guardando() ? 'Guardando…' : 'Guardar tarea' }}
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="data-panel">
+    <div class="panel-heading">
+      <div>
+        <h3>Tareas registradas</h3>
+        <p>{{ tareas().length }} tareas en {{ sedeNombre() }}.</p>
+      </div>
+    </div>
+    <p *ngIf="tasksService.loading()" class="feedback" role="status">Cargando tareas…</p>
+    <div *ngIf="!tasksService.loading() && tareas().length" class="task-list">
+      <article *ngFor="let tarea of tareas()" class="task-card">
+        <div class="task-card-heading">
+          <div>
+            <span class="type-badge">{{ tarea.tipo }}</span>
+            <h4>{{ tarea.titulo }}</h4>
+          </div>
+          <time>{{ tarea.createdAt | date: 'dd/MM/yyyy HH:mm' }}</time>
+        </div>
+        <p>{{ tarea.descripcion }}</p>
+        <footer>
+          <span>Operador: {{ tarea.operador }}</span>
+          <span *ngIf="tarea.duracionMinutos !== null">{{ tarea.duracionMinutos }} min</span>
+        </footer>
+      </article>
+    </div>
+    <div *ngIf="!tasksService.loading() && !tareas().length" class="empty-state">
+      <span class="empty-icon">◷</span>
+      <h3>Todavía no hay tareas registradas</h3>
+      <p>Las tareas que registres en esta sede aparecerán aquí.</p>
+    </div>
+  </section>
+</main>

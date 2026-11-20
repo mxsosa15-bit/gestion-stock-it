@@ -1,10 +1,15 @@
 import {
+  applyStockShipment,
   attributeHistoryOperators,
+  areDelegationStockChangesValid,
   areExistingComponentsUnchanged,
   createLoginFailureKey,
   normalizeSnapshot,
   parseComponentEdit,
+  parseManagedUserUpdate,
   parsePasswordReset,
+  parseStockShipmentRequest,
+  StockShipmentValidationError,
   type InventorySnapshot,
 } from './inventory-api';
 
@@ -59,6 +64,32 @@ describe('normalizeSnapshot', () => {
     expect(new Set(codes).size).toBe(codes.length);
     expect(ram).not.toHaveProperty('codigoSeguimiento');
     expect(result.stock[1]).not.toHaveProperty('codigoSeguimiento');
+  });
+
+  it('assigns legacy floors and stock to Casa Central while preserving explicit locations', () => {
+    const result = normalizeSnapshot({
+      pisos: [
+        { id: 'legacy-floor', nombre: 'Planta baja', nivel: 0 },
+        {
+          id: 'remote-floor',
+          nombre: 'Oficina',
+          nivel: 0,
+          sedeId: '11111111-1111-4111-8111-111111111111',
+        },
+      ],
+      areas: [],
+      stock: [{ id: 'legacy-stock', tipo: 'RAM' }],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    });
+
+    expect(result.pisos.map((floor) => floor['sedeId'])).toEqual([
+      '00000000-0000-4000-8000-000000000001',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+    expect(result.stock[0]?.['sedeId']).toBe('00000000-0000-4000-8000-000000000001');
   });
 });
 
@@ -127,6 +158,238 @@ describe('attributeHistoryOperators', () => {
       operadorId: 'original-operator',
       operador: 'operador-original',
     });
+  });
+});
+
+describe('parseStockShipmentRequest', () => {
+  it('accepts a complete shipment request and trims its text fields', () => {
+    expect(
+      parseStockShipmentRequest({
+        insumoId: ' stock-1 ',
+        destinoSedeId: '11111111-1111-4111-8111-111111111111',
+        cantidad: 3,
+        motivo: ' Reposición ',
+      }),
+    ).toEqual({
+      insumoId: 'stock-1',
+      destinoSedeId: '11111111-1111-4111-8111-111111111111',
+      cantidad: 3,
+      motivo: 'Reposición',
+    });
+  });
+
+  it('rejects invalid quantities, destinations, and missing reasons', () => {
+    const request = {
+      insumoId: 'stock-1',
+      destinoSedeId: '11111111-1111-4111-8111-111111111111',
+      cantidad: 3,
+      motivo: 'Reposición',
+    };
+    expect(parseStockShipmentRequest({ ...request, cantidad: 0 })).toBeNull();
+    expect(parseStockShipmentRequest({ ...request, cantidad: 1.5 })).toBeNull();
+    expect(parseStockShipmentRequest({ ...request, destinoSedeId: 'sede-invalida' })).toBeNull();
+    expect(parseStockShipmentRequest({ ...request, motivo: '  ' })).toBeNull();
+  });
+});
+
+describe('applyStockShipment', () => {
+  const actor = {
+    id: '11111111-1111-4111-8111-111111111111',
+    username: 'operador',
+    role: 'operator' as const,
+    areaId: null,
+    areaNombre: null,
+  };
+  const request = {
+    insumoId: 'stock-central',
+    destinoSedeId: '22222222-2222-4222-8222-222222222222',
+    cantidad: 3,
+    motivo: 'Reposición',
+  };
+
+  it('decrements Casa Central, credits the delegation, and attributes the audit movement', () => {
+    const snapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [
+        {
+          id: 'stock-central',
+          tipo: 'RAM',
+          marca: 'Kingston',
+          especificacion: '8 GB',
+          cantidadDisponible: 10,
+          stockMinimo: 2,
+          sedeId: '00000000-0000-4000-8000-000000000001',
+        },
+      ],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+
+    const result = applyStockShipment(snapshot, request, 'Delegación Norte', actor);
+
+    expect(
+      result.stock.find((item) => item['id'] === 'stock-central')?.['cantidadDisponible'],
+    ).toBe(7);
+    expect(result.stock).toContainEqual(
+      expect.objectContaining({
+        tipo: 'RAM',
+        marca: 'Kingston',
+        cantidadDisponible: 3,
+        stockMinimo: 2,
+        sedeId: request.destinoSedeId,
+      }),
+    );
+    expect(result.historial[0]).toMatchObject({
+      tipo: 'TRANSFERENCIA_STOCK',
+      cantidad: 3,
+      sedeId: '00000000-0000-4000-8000-000000000001',
+      sedeDestinoId: request.destinoSedeId,
+      operadorId: actor.id,
+      operador: actor.username,
+    });
+    expect(snapshot.stock[0]?.['cantidadDisponible']).toBe(10);
+  });
+
+  it('adds transferred quantity to an existing matching product at the destination', () => {
+    const snapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [
+        {
+          id: 'stock-central',
+          tipo: 'RAM',
+          marca: 'Kingston',
+          especificacion: '8 GB',
+          cantidadDisponible: 10,
+          stockMinimo: 2,
+          sedeId: '00000000-0000-4000-8000-000000000001',
+        },
+        {
+          id: 'stock-destination',
+          tipo: 'RAM',
+          marca: 'Kingston',
+          especificacion: '8 GB',
+          cantidadDisponible: 4,
+          stockMinimo: 1,
+          sedeId: request.destinoSedeId,
+        },
+      ],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+
+    const result = applyStockShipment(snapshot, request, 'Delegación Norte', actor);
+
+    expect(
+      result.stock.find((item) => item['id'] === 'stock-destination')?.['cantidadDisponible'],
+    ).toBe(7);
+    expect(result.stock).toHaveLength(2);
+  });
+
+  it('rejects shipments greater than the Casa Central balance', () => {
+    const snapshot: InventorySnapshot = {
+      pisos: [],
+      areas: [],
+      stock: [
+        {
+          id: 'stock-central',
+          tipo: 'RAM',
+          marca: 'Kingston',
+          especificacion: '8 GB',
+          cantidadDisponible: 2,
+          stockMinimo: 0,
+          sedeId: '00000000-0000-4000-8000-000000000001',
+        },
+      ],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+
+    expect(() => applyStockShipment(snapshot, request, 'Delegación Norte', actor)).toThrow(
+      StockShipmentValidationError,
+    );
+  });
+});
+
+describe('areDelegationStockChangesValid', () => {
+  const delegatedStock = {
+    id: 'stock-delegation',
+    tipo: 'RAM',
+    marca: 'Kingston',
+    especificacion: '8 GB',
+    cantidadDisponible: 4,
+    stockMinimo: 1,
+    sedeId: '22222222-2222-4222-8222-222222222222',
+  };
+  const current: InventorySnapshot = {
+    pisos: [],
+    areas: [],
+    stock: [delegatedStock],
+    puestos: [],
+    equiposRed: [],
+    componentesRetirados: [],
+    historial: [],
+  };
+
+  it('rejects direct additions or transfers into a delegation through inventory save', () => {
+    expect(
+      areDelegationStockChangesValid(current, {
+        ...current,
+        stock: [{ ...delegatedStock, cantidadDisponible: 7 }],
+        historial: [],
+      }),
+    ).toBe(false);
+    expect(
+      areDelegationStockChangesValid(
+        { ...current, stock: [] },
+        { ...current, stock: [delegatedStock] },
+      ),
+    ).toBe(false);
+    expect(
+      areDelegationStockChangesValid(current, {
+        ...current,
+        stock: [{ ...delegatedStock, sedeId: '00000000-0000-4000-8000-000000000001' }],
+      }),
+    ).toBe(false);
+  });
+
+  it('allows a delegated balance increase only when it is a recorded stock adjustment', () => {
+    expect(
+      areDelegationStockChangesValid(current, {
+        ...current,
+        stock: [{ ...delegatedStock, cantidadDisponible: 7 }],
+        historial: [
+          {
+            id: 'adjustment-1',
+            tipo: 'AJUSTE_STOCK',
+            insumoId: delegatedStock.id,
+            sedeId: delegatedStock.sedeId,
+            cantidad: 3,
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      areDelegationStockChangesValid(current, {
+        ...current,
+        stock: [{ ...delegatedStock, cantidadDisponible: 7 }],
+        historial: [],
+      }),
+    ).toBe(false);
+    expect(
+      areDelegationStockChangesValid(current, {
+        ...current,
+        stock: [{ ...delegatedStock, cantidadDisponible: -1 }],
+        historial: [],
+      }),
+    ).toBe(false);
   });
 });
 
@@ -243,5 +506,31 @@ describe('parsePasswordReset', () => {
     expect(parsePasswordReset({})).toBeNull();
     expect(parsePasswordReset({ password: 'short' })).toBeNull();
     expect(parsePasswordReset({ password: 123456789012 })).toBeNull();
+  });
+});
+
+describe('parseManagedUserUpdate', () => {
+  it('accepts a role and active-area identifier without exposing username changes', () => {
+    expect(
+      parseManagedUserUpdate({
+        username: 'different-name',
+        role: 'solicitante',
+        areaId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).toEqual({
+      role: 'solicitante',
+      areaId: '00000000-0000-4000-8000-000000000001',
+    });
+  });
+
+  it('requires an area for requesters and rejects areas for other roles', () => {
+    expect(parseManagedUserUpdate({ role: 'solicitante', areaId: null })).toBeNull();
+    expect(
+      parseManagedUserUpdate({
+        role: 'operator',
+        areaId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).toBeNull();
+    expect(parseManagedUserUpdate({ role: 'invalid', areaId: null })).toBeNull();
   });
 });

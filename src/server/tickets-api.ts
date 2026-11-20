@@ -34,6 +34,10 @@ interface WorkshopApprovalInput {
 
 interface WorkshopReturnInput {
   solucion: string;
+  resultadoEquipo: 'MISMO' | 'REEMPLAZO';
+  equipoDevuelto: string;
+  identificacionDevuelta: string;
+  motivoReemplazo: string | null;
 }
 
 interface WorkshopTransferRecord {
@@ -49,6 +53,10 @@ interface WorkshopTransferRecord {
   motivo_rechazo: string | null;
   devuelto_at: string | null;
   devuelto_por_nombre: string | null;
+  resultado_equipo: 'MISMO' | 'REEMPLAZO' | 'SIN_DATOS' | null;
+  equipo_devuelto: string | null;
+  identificacion_devuelta: string | null;
+  motivo_reemplazo: string | null;
 }
 
 interface TicketRecord extends Omit<TicketInput, 'puestoAfectadoId'> {
@@ -62,6 +70,8 @@ interface TicketRecord extends Omit<TicketInput, 'puestoAfectadoId'> {
   inventory_area_id: string | null;
   usuario_nombre: string;
   area_nombre: string | null;
+  sede_id: string | null;
+  sede_nombre: string | null;
   puesto_afectado_id: string | null;
   nombre_afectado: string | null;
   taller: WorkshopTransferRecord | null;
@@ -75,6 +85,8 @@ interface DashboardTicketRecord {
   fecha_creacion: Date;
   fecha_resolucion: Date | null;
   area_nombre: string | null;
+  sede_id: string | null;
+  sede_nombre: string | null;
   nombre_afectado: string | null;
   taller: { estado: WorkshopTransferRecord['estado'] } | null;
 }
@@ -140,10 +152,60 @@ export function parseWorkshopApprovalInput(value: unknown): WorkshopApprovalInpu
 
 export function parseWorkshopReturnInput(value: unknown): WorkshopReturnInput | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const rawSolucion = (value as Record<string, unknown>)['solucion'];
+  const body = value as Record<string, unknown>;
+  const rawSolucion = body['solucion'];
   const solucion = typeof rawSolucion === 'string' ? rawSolucion.trim() : '';
-  if (!solucion || solucion.length > 10_000) return null;
-  return { solucion };
+  const resultadoEquipo = body['resultadoEquipo'];
+  const equipoDevuelto =
+    typeof body['equipoDevuelto'] === 'string' ? body['equipoDevuelto'].trim() : '';
+  const identificacionDevuelta =
+    typeof body['identificacionDevuelta'] === 'string' ? body['identificacionDevuelta'].trim() : '';
+  const rawMotivoReemplazo = body['motivoReemplazo'];
+  const motivoReemplazo = typeof rawMotivoReemplazo === 'string' ? rawMotivoReemplazo.trim() : '';
+  if (
+    !solucion ||
+    solucion.length > 10_000 ||
+    (resultadoEquipo !== 'MISMO' && resultadoEquipo !== 'REEMPLAZO') ||
+    !equipoDevuelto ||
+    equipoDevuelto.length > 200 ||
+    !identificacionDevuelta ||
+    identificacionDevuelta.length > 200 ||
+    (rawMotivoReemplazo !== undefined &&
+      rawMotivoReemplazo !== null &&
+      typeof rawMotivoReemplazo !== 'string') ||
+    (resultadoEquipo === 'MISMO' && motivoReemplazo.length > 0) ||
+    (resultadoEquipo === 'REEMPLAZO' && (!motivoReemplazo || motivoReemplazo.length > 2_000))
+  ) {
+    return null;
+  }
+  return {
+    solucion,
+    resultadoEquipo,
+    equipoDevuelto,
+    identificacionDevuelta,
+    motivoReemplazo: resultadoEquipo === 'REEMPLAZO' ? motivoReemplazo : null,
+  };
+}
+
+export function validateWorkshopReturnEquipment(
+  workshopReturn: WorkshopReturnInput,
+  sentEquipment: string,
+  sentIdentifier: string,
+): string | null {
+  if (
+    workshopReturn.resultadoEquipo === 'MISMO' &&
+    (workshopReturn.equipoDevuelto !== sentEquipment ||
+      workshopReturn.identificacionDevuelta !== sentIdentifier)
+  ) {
+    return 'Si vuelve el mismo equipo, su descripción e identificación deben coincidir con las registradas al enviarlo.';
+  }
+  if (
+    workshopReturn.resultadoEquipo === 'REEMPLAZO' &&
+    workshopReturn.identificacionDevuelta === sentIdentifier
+  ) {
+    return 'El reemplazo debe tener una identificación distinta de la unidad enviada.';
+  }
+  return null;
 }
 
 export function parseTicketUpdate(value: unknown): TicketUpdate | null {
@@ -166,13 +228,15 @@ const ticketOrder = `ORDER BY t.fecha_creacion DESC, t.id DESC`;
 const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estado, t.solucion,
                              t.fecha_creacion, t.fecha_resolucion, t.usuario_id,
                              t.puesto_afectado_id, t.nombre_afectado,
-                             u.area_id AS usuario_area_id,
+                             t.area_id::text AS usuario_area_id,
                              a.inventory_area_id,
                              u.username AS usuario_nombre, a.nombre AS area_nombre,
+                             t.sede_id::text AS sede_id, sede.nombre AS sede_nombre,
                              workshop.transferencia AS taller
                       FROM gestion_it.tickets AS t
                       JOIN gestion_it.app_users AS u ON u.id = t.usuario_id
-                      LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+                      LEFT JOIN gestion_it.areas AS a ON a.id = t.area_id
+                      LEFT JOIN gestion_it.sedes AS sede ON sede.id = t.sede_id
                       LEFT JOIN LATERAL (
                         SELECT jsonb_build_object(
                           'id', wt.id, 'equipo', wt.equipo, 'identificacion', wt.identificacion,
@@ -183,7 +247,11 @@ const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estad
                           'aprobado_por_nombre', approver.username,
                           'motivo_rechazo', wt.motivo_rechazo,
                           'devuelto_at', wt.devuelto_at,
-                          'devuelto_por_nombre', returner.username
+                          'devuelto_por_nombre', returner.username,
+                          'resultado_equipo', wt.resultado_equipo,
+                          'equipo_devuelto', wt.equipo_devuelto,
+                          'identificacion_devuelta', wt.identificacion_devuelta,
+                          'motivo_reemplazo', wt.motivo_reemplazo
                         ) AS transferencia
                         FROM gestion_it.ticket_workshop_transfers AS wt
                         JOIN gestion_it.app_users AS requester ON requester.id = wt.solicitado_por
@@ -262,16 +330,21 @@ export function createTicketsApi(pool: Pool): express.Router {
     },
   );
 
-  router.get('/tickets/dashboard', requireRoles(['admin', 'operator', 'dashboard']), async (_request, response, next) => {
-    try {
-      const result = await pool.query<DashboardTicketRecord>(
-        `SELECT t.id, t.titulo, t.categoria, t.estado,
+  router.get(
+    '/tickets/dashboard',
+    requireRoles(['admin', 'operator', 'dashboard']),
+    async (_request, response, next) => {
+      try {
+        const result = await pool.query<DashboardTicketRecord>(
+          `SELECT t.id, t.titulo, t.categoria, t.estado,
                 t.fecha_creacion, t.fecha_resolucion,
-                a.nombre AS area_nombre, t.nombre_afectado,
+                a.nombre AS area_nombre, t.sede_id::text AS sede_id,
+                sede.nombre AS sede_nombre, t.nombre_afectado,
                 workshop.transferencia AS taller
          FROM gestion_it.tickets AS t
          JOIN gestion_it.app_users AS u ON u.id = t.usuario_id
-         LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         LEFT JOIN gestion_it.areas AS a ON a.id = t.area_id
+         LEFT JOIN gestion_it.sedes AS sede ON sede.id = t.sede_id
          LEFT JOIN LATERAL (
            SELECT jsonb_build_object(
              'estado', wt.estado,
@@ -284,12 +357,13 @@ export function createTicketsApi(pool: Pool): express.Router {
            LIMIT 1
          ) AS workshop ON true
          ${ticketOrder}`,
-      );
-      response.json(result.rows);
-    } catch (error) {
-      next(error);
-    }
-  });
+        );
+        response.json(result.rows);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.get('/tickets', requireOperator, async (_request, response, next) => {
     try {
@@ -383,7 +457,7 @@ export function createTicketsApi(pool: Pool): express.Router {
     }
     try {
       const result = await pool.query<TicketRecord>(
-        `${ticketSelect} WHERE u.area_id = $1 ${ticketOrder}`,
+        `${ticketSelect} WHERE t.area_id = $1 ${ticketOrder}`,
         [areaId],
       );
       response.json(result.rows);
@@ -396,8 +470,7 @@ export function createTicketsApi(pool: Pool): express.Router {
     const ticket = parseTicketInput(request.body);
     if (!ticket) {
       response.status(400).json({
-        error:
-          'Ingresá asunto, categoría, detalle del problema y el puesto afectado.',
+        error: 'Ingresá asunto, categoría, detalle del problema y el puesto afectado.',
       });
       return;
     }
@@ -413,10 +486,11 @@ export function createTicketsApi(pool: Pool): express.Router {
     try {
       const result = await pool.query<{ id: string }>(
         `INSERT INTO gestion_it.tickets
-           (titulo, descripcion, categoria, usuario_id, puesto_afectado_id, nombre_afectado)
+           (titulo, descripcion, categoria, usuario_id, puesto_afectado_id, nombre_afectado, sede_id, area_id)
          SELECT $1, $2, $3, requester.id, workstation->>'id',
                 COALESCE(NULLIF(btrim(workstation->>'usuarioAsignado'), ''),
-                         NULLIF(btrim(workstation->>'nombrePuesto'), ''))
+                         NULLIF(btrim(workstation->>'nombrePuesto'), '')),
+                area.sede_id, area.id
          FROM gestion_it.app_users AS requester
          JOIN gestion_it.areas AS area ON area.id = requester.area_id
          JOIN gestion_it.inventory_snapshot AS snapshot ON snapshot.singleton_id = true
@@ -502,7 +576,8 @@ export function createTicketsApi(pool: Pool): express.Router {
         error.code === '23505'
       ) {
         response.status(409).json({
-          error: 'Este reclamo ya tiene una derivación pendiente o un equipo actualmente en taller.',
+          error:
+            'Este reclamo ya tiene una derivación pendiente o un equipo actualmente en taller.',
         });
         return;
       }
@@ -624,12 +699,58 @@ export function createTicketsApi(pool: Pool): express.Router {
           return;
         }
 
+        const workshop = await client.query<{
+          equipo: string;
+          identificacion: string;
+          estado: string;
+        }>(
+          `SELECT equipo, identificacion, estado
+           FROM gestion_it.ticket_workshop_transfers
+           WHERE id = $1 AND ticket_id = $2
+           FOR UPDATE`,
+          [transferId, ticketId],
+        );
+        const activeTransfer = workshop.rows[0];
+        if (!activeTransfer || activeTransfer.estado !== 'En taller') {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(409).json({
+            error: 'El equipo no figura en taller o ya se registró su devolución.',
+          });
+          return;
+        }
+        const returnError = validateWorkshopReturnEquipment(
+          workshopReturn,
+          activeTransfer.equipo,
+          activeTransfer.identificacion,
+        );
+        if (returnError) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(400).json({ error: returnError });
+          return;
+        }
+
         const returned = await client.query(
           `UPDATE gestion_it.ticket_workshop_transfers
-           SET estado = 'Devuelto', devuelto_por = $3, devuelto_at = now()
+           SET estado = 'Devuelto',
+               devuelto_por = $3,
+               devuelto_at = now(),
+               resultado_equipo = $4,
+               equipo_devuelto = $5,
+               identificacion_devuelta = $6,
+               motivo_reemplazo = $7
            WHERE id = $1 AND ticket_id = $2 AND estado = 'En taller'
            RETURNING id`,
-          [transferId, ticketId, operator.id],
+          [
+            transferId,
+            ticketId,
+            operator.id,
+            workshopReturn.resultadoEquipo,
+            workshopReturn.equipoDevuelto,
+            workshopReturn.identificacionDevuelta,
+            workshopReturn.motivoReemplazo,
+          ],
         );
         if (!returned.rows[0]) {
           await client.query('ROLLBACK');
@@ -717,9 +838,10 @@ export function createTicketsApi(pool: Pool): express.Router {
         const blockedByWorkshopState = blockingTransfer.rows[0]?.estado;
         if (blockedByWorkshopState) {
           response.status(409).json({
-            error: blockedByWorkshopState === 'Pendiente'
-              ? 'No podés terminar el reclamo hasta que el solicitante responda sobre el equipo.'
-              : 'No podés terminar el reclamo hasta registrar la devolución del equipo desde Taller y scrap.',
+            error:
+              blockedByWorkshopState === 'Pendiente'
+                ? 'No podés terminar el reclamo hasta que el solicitante responda sobre el equipo.'
+                : 'No podés terminar el reclamo hasta registrar la devolución del equipo desde Taller y scrap.',
           });
           return;
         }

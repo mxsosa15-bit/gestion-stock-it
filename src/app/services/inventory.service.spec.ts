@@ -188,6 +188,7 @@ describe('InventoryService', () => {
       cantidadDisponible: 1,
       stockMinimo: 1,
     });
+
     service.agregarInsumoStock({
       tipo: 'RAM',
       marca: 'Kingston',
@@ -230,6 +231,88 @@ describe('InventoryService', () => {
         puestoId: puesto.id,
       }),
     );
+  });
+
+  it('registers opening stock as an exact balance instead of adding it', () => {
+    service.registrarSaldoInicial({
+      tipo: 'DISCO_SSD',
+      marca: 'Kingston',
+      especificacion: 'SSD 500GB',
+      cantidadDisponible: 17,
+      stockMinimo: 3,
+    });
+
+    expect(service.stock().find((item) => item.especificacion === 'SSD 500GB')).toMatchObject({
+      cantidadDisponible: 17,
+      sedeId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(service.historial()[0]).toMatchObject({
+      tipo: 'SALDO_INICIAL',
+      cantidad: 17,
+    });
+  });
+
+  it('adjusts to the counted balance and requires an auditable reason', () => {
+    service.ajustarStock('ssd-1', 17, 'Se consumieron 3 unidades antes de la carga inicial');
+
+    expect(service.stock()[0]?.cantidadDisponible).toBe(17);
+    expect(service.historial()[0]).toMatchObject({
+      tipo: 'AJUSTE_STOCK',
+      cantidad: 15,
+    });
+    expect(service.historial()[0]?.detalle).toContain('2 → 17');
+    expect(() => service.ajustarStock('ssd-1', -1, 'Conteo')).toThrow(
+      'La cantidad real debe ser un entero igual o mayor que cero.',
+    );
+    expect(() => service.ajustarStock('ssd-1', 17, '')).toThrow('Indicá un motivo de ajuste');
+  });
+
+  it('keeps otherwise identical stock products separate by location', () => {
+    service.agregarInsumoStock(
+      {
+        tipo: 'DISCO_SSD',
+        marca: 'Kingston',
+        especificacion: 'SSD 480GB SATA3',
+        cantidadDisponible: 4,
+        stockMinimo: 1,
+      },
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(service.stock()).toHaveLength(2);
+    expect(service.stock()[0]?.cantidadDisponible).toBe(2);
+    expect(service.stock()[1]).toMatchObject({
+      cantidadDisponible: 4,
+      sedeId: '11111111-1111-4111-8111-111111111111',
+    });
+  });
+
+  it('does not block a same-named person assigned in a different location', () => {
+    service.pisos.set([
+      { id: 'piso-1', nombre: 'Planta Baja', nivel: 0 },
+      {
+        id: 'piso-remoto',
+        nombre: 'Oficina',
+        nivel: 0,
+        sedeId: '11111111-1111-4111-8111-111111111111',
+      },
+    ]);
+    service.areas.set([
+      { id: 'area-1', pisoId: 'piso-1', nombre: 'Cajas' },
+      { id: 'area-remota', pisoId: 'piso-remoto', nombre: 'General' },
+    ]);
+    service.personas.set([
+      { id: 'persona-central', nombre: 'Juan Pérez', areaId: 'area-1', puestoId: null },
+    ]);
+
+    const remoteWorkstation = service.crearPuestoTrabajo({
+      areaId: 'area-remota',
+      nombrePuesto: 'Puesto remoto',
+      usuarioAsignado: 'Juan Pérez',
+      componentes: [],
+    });
+
+    expect(remoteWorkstation.usuarioAsignado).toBe('Juan Pérez');
   });
 
   it('creates a person automatically with a workstation and prevents duplicate assignments', () => {

@@ -1,8 +1,9 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { InventoryService } from '../../services/inventory.service';
 import { SupportTicket, TicketsService } from '../../services/tickets.service';
+import { DEFAULT_SEDE_ID } from '../../../shared/locations';
 
 @Component({
   selector: 'app-area-assets-explorer',
@@ -16,10 +17,24 @@ export class AreaAssetsExplorerComponent {
   private readonly ticketsService = inject(TicketsService);
   private ticketRequestSequence = 0;
 
-  readonly pisos = this.inventoryService.pisos;
-  readonly areas = this.inventoryService.areas;
-  readonly puestos = this.inventoryService.puestos;
-  readonly equiposRed = this.inventoryService.equiposRed;
+  readonly sedeId = input.required<string>();
+  readonly pisos = computed(() =>
+    this.inventoryService
+      .pisos()
+      .filter((piso) => (piso.sedeId ?? DEFAULT_SEDE_ID) === this.sedeId()),
+  );
+  readonly areas = computed(() => {
+    const pisoIds = new Set(this.pisos().map((piso) => piso.id));
+    return this.inventoryService.areas().filter((area) => pisoIds.has(area.pisoId));
+  });
+  readonly puestos = computed(() => {
+    const areaIds = new Set(this.areas().map((area) => area.id));
+    return this.inventoryService.puestos().filter((puesto) => areaIds.has(puesto.areaId));
+  });
+  readonly equiposRed = computed(() => {
+    const areaIds = new Set(this.areas().map((area) => area.id));
+    return this.inventoryService.equiposRed().filter((equipo) => areaIds.has(equipo.areaId));
+  });
   readonly pisoSeleccionadoId = signal('');
   readonly areaSeleccionadaId = signal('');
   readonly tickets = signal<SupportTicket[]>([]);

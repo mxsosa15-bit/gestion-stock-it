@@ -1,0 +1,78 @@
+<section class="stock-dispatch data-panel" aria-labelledby="stock-dispatch-title">
+  <div class="panel-heading">
+    <div>
+      <h3 id="stock-dispatch-title">Enviar stock desde Casa Central</h3>
+      <p>El envío descuenta el saldo central y acredita la delegación en una sola operación.</p>
+    </div>
+  </div>
+
+  @if (error()) {
+    <p class="dispatch-feedback dispatch-error" role="alert">{{ error() }}</p>
+  }
+  @if (aviso()) {
+    <p class="dispatch-feedback dispatch-success" role="status">{{ aviso() }}</p>
+  }
+
+  @if (delegaciones().length === 0) {
+    <p class="dispatch-empty">No hay delegaciones activas disponibles como destino.</p>
+  } @else if (stockCentral().length === 0) {
+    <p class="dispatch-empty">Casa Central no tiene productos disponibles para enviar.</p>
+  } @else {
+    <form class="dispatch-form" (ngSubmit)="enviar()">
+      <label>
+        <span>Producto de Casa Central</span>
+        <select
+          required
+          name="insumoId"
+          [ngModel]="insumoId()"
+          (ngModelChange)="insumoId.set($event)"
+        >
+          <option value="">Seleccioná un producto</option>
+          @for (insumo of stockCentral(); track insumo.id) {
+            <option [value]="insumo.id">{{ etiquetaInsumo(insumo) }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Delegación de destino</span>
+        <select
+          required
+          name="destinoSedeId"
+          [ngModel]="destinoSedeId()"
+          (ngModelChange)="destinoSedeId.set($event)"
+        >
+          <option value="">Seleccioná una delegación</option>
+          @for (sede of delegaciones(); track sede.id) {
+            <option [value]="sede.id">{{ sede.nombre }} · {{ sede.departamento }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Cantidad</span>
+        <input
+          required
+          type="number"
+          min="1"
+          [max]="insumoSeleccionado()?.cantidadDisponible ?? null"
+          name="cantidad"
+          [ngModel]="cantidad()"
+          (ngModelChange)="cantidad.set($event)"
+        />
+      </label>
+      <label class="dispatch-reason">
+        <span>Motivo o referencia</span>
+        <input
+          required
+          maxlength="500"
+          name="motivo"
+          placeholder="Ej. Reposición mensual o solicitud de la delegación"
+          [ngModel]="motivo()"
+          (ngModelChange)="motivo.set($event)"
+        />
+      </label>
+      <button type="submit" class="dispatch-button" [disabled]="enviando()">
+        {{ enviando() ? 'Registrando envío…' : 'Registrar envío' }}
+      </button>
+    </form>
+  }
+</section>

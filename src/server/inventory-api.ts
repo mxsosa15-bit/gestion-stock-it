@@ -6,13 +6,11 @@ import connectPgSimple from 'connect-pg-simple';
 import type { Pool, PoolClient } from 'pg';
 import { hashPassword, verifyPassword } from './password';
 import { requireRoles, type SessionUser, type SystemRole } from './session-user';
-import {
-  installOperatorAuditMiddleware,
-  inventoryHistoryAuditEvents,
-} from './operator-audit';
+import { installOperatorAuditMiddleware, inventoryHistoryAuditEvents } from './operator-audit';
+import { DEFAULT_SEDE_ID } from '../shared/locations';
 
 export interface InventorySnapshot {
-  pisos: unknown[];
+  pisos: Record<string, unknown>[];
   areas: unknown[];
   personas?: Record<string, unknown>[];
   stock: Record<string, unknown>[];
@@ -34,6 +32,18 @@ export interface ComponentEdit {
   especificacion: string;
   numeroSerie?: string;
   codigoSeguimiento?: string;
+}
+
+export interface StockShipmentRequest {
+  insumoId: string;
+  destinoSedeId: string;
+  cantidad: number;
+  motivo: string;
+}
+
+export interface ManagedUserUpdate {
+  role: SystemRole;
+  areaId: string | null;
 }
 
 const externalTypes = new Set(['MONITOR', 'TECLADO', 'MOUSE', 'IMPRESORA', 'SCANNER']);
@@ -58,9 +68,33 @@ const emptySnapshot: InventorySnapshot = {
   componentesRetirados: [],
   historial: [],
 };
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function parseStockShipmentRequest(value: unknown): StockShipmentRequest | null {
+  if (!isRecord(value)) return null;
+  const insumoId = value['insumoId'];
+  const destinoSedeId = value['destinoSedeId'];
+  const cantidad = value['cantidad'];
+  const motivo = typeof value['motivo'] === 'string' ? value['motivo'].trim() : '';
+  if (
+    typeof insumoId !== 'string' ||
+    !insumoId.trim() ||
+    insumoId.length > 200 ||
+    typeof destinoSedeId !== 'string' ||
+    !uuidPattern.test(destinoSedeId) ||
+    !Number.isSafeInteger(cantidad) ||
+    (cantidad as number) <= 0 ||
+    (cantidad as number) > 1_000_000 ||
+    !motivo ||
+    motivo.length > 500
+  ) {
+    return null;
+  }
+  return { insumoId: insumoId.trim(), destinoSedeId, cantidad: cantidad as number, motivo };
 }
 
 function isInventorySnapshot(value: unknown): value is InventorySnapshot {
@@ -201,6 +235,13 @@ async function syncInventoryAreas(client: PoolClient, snapshot: InventorySnapsho
   await client.query(
     'UPDATE gestion_it.areas SET activo = false WHERE inventory_area_id IS NOT NULL',
   );
+  const floorLocations = new Map(
+    snapshot.pisos.flatMap((value) =>
+      isRecord(value) && typeof value['id'] === 'string'
+        ? [[value['id'], String(value['sedeId'] ?? DEFAULT_SEDE_ID)] as const]
+        : [],
+    ),
+  );
   for (const value of snapshot.areas) {
     if (
       !isRecord(value) ||
@@ -210,13 +251,36 @@ async function syncInventoryAreas(client: PoolClient, snapshot: InventorySnapsho
       throw new Error('El inventario contiene un área inválida.');
     }
     await client.query(
-      `INSERT INTO gestion_it.areas (id, nombre, inventory_area_id, activo)
-       VALUES ($1, $2, $3, true)
+      `INSERT INTO gestion_it.areas (id, nombre, inventory_area_id, sede_id, activo)
+       VALUES ($1, $2, $3, $4, true)
        ON CONFLICT (inventory_area_id)
-       DO UPDATE SET nombre = EXCLUDED.nombre, activo = true`,
-      [randomUUID(), value['nombre'].trim(), value['id']],
+       DO UPDATE SET nombre = EXCLUDED.nombre, sede_id = EXCLUDED.sede_id, activo = true`,
+      [
+        randomUUID(),
+        value['nombre'].trim(),
+        value['id'],
+        floorLocations.get(String(value['pisoId'])) ?? DEFAULT_SEDE_ID,
+      ],
     );
   }
+}
+
+async function hasKnownInventorySedes(
+  client: PoolClient,
+  snapshot: InventorySnapshot,
+): Promise<boolean> {
+  const sedeIds = [
+    ...snapshot.pisos.map((piso) => String(piso['sedeId'] ?? DEFAULT_SEDE_ID)),
+    ...snapshot.stock.map((insumo) => String(insumo['sedeId'] ?? DEFAULT_SEDE_ID)),
+  ];
+  if (!sedeIds.every((id) => uuidPattern.test(id))) return false;
+  const uniqueIds = [...new Set(sedeIds)];
+  if (uniqueIds.length === 0) return true;
+  const result = await client.query<{ id: string }>(
+    'SELECT id::text FROM gestion_it.sedes WHERE id = ANY($1::uuid[])',
+    [uniqueIds],
+  );
+  return result.rows.length === uniqueIds.length;
 }
 
 function ensureTrackingCode(value: unknown, prefix: string): string {
@@ -224,9 +288,61 @@ function ensureTrackingCode(value: unknown, prefix: string): string {
   return code || `${prefix}-${randomUUID().replaceAll('-', '').toUpperCase()}`;
 }
 
+export function areDelegationStockChangesValid(
+  current: InventorySnapshot,
+  proposed: InventorySnapshot,
+): boolean {
+  const previousById = new Map(current.stock.map((item) => [item['id'], item]));
+  const existingHistoryIds = new Set(
+    current.historial.flatMap((entry) =>
+      isRecord(entry) && typeof entry['id'] === 'string' ? [entry['id']] : [],
+    ),
+  );
+  const newHistory = proposed.historial.filter(
+    (entry): entry is Record<string, unknown> =>
+      isRecord(entry) && typeof entry['id'] === 'string' && !existingHistoryIds.has(entry['id']),
+  );
+
+  return proposed.stock.every((item) => {
+    const sedeId = String(item['sedeId'] ?? DEFAULT_SEDE_ID);
+    const previous = typeof item['id'] === 'string' ? previousById.get(item['id']) : undefined;
+    if (!previous) return sedeId === DEFAULT_SEDE_ID;
+    if (String(previous['sedeId'] ?? DEFAULT_SEDE_ID) !== sedeId) return false;
+    if (sedeId === DEFAULT_SEDE_ID) return true;
+    const oldQuantity = previous['cantidadDisponible'];
+    const newQuantity = item['cantidadDisponible'];
+    if (
+      typeof oldQuantity !== 'number' ||
+      !Number.isSafeInteger(oldQuantity) ||
+      oldQuantity < 0 ||
+      typeof newQuantity !== 'number' ||
+      !Number.isSafeInteger(newQuantity) ||
+      newQuantity < 0
+    ) {
+      return false;
+    }
+    if (newQuantity <= oldQuantity) return true;
+    const difference = newQuantity - oldQuantity;
+    return newHistory.some(
+      (entry) =>
+        entry['tipo'] === 'AJUSTE_STOCK' &&
+        entry['insumoId'] === item['id'] &&
+        entry['sedeId'] === sedeId &&
+        entry['cantidad'] === difference,
+    );
+  });
+}
+
 export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapshot {
   return {
     ...snapshot,
+    pisos: snapshot.pisos.map((piso) => ({
+      ...piso,
+      sedeId:
+        typeof piso['sedeId'] === 'string' && piso['sedeId'].trim()
+          ? piso['sedeId']
+          : DEFAULT_SEDE_ID,
+    })),
     personas:
       snapshot.personas ??
       snapshot.puestos.flatMap((puesto) => {
@@ -255,12 +371,19 @@ export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapsho
         : [],
     })),
     stock: snapshot.stock.map((insumo) => {
+      const withLocation = {
+        ...insumo,
+        sedeId:
+          typeof insumo['sedeId'] === 'string' && insumo['sedeId'].trim()
+            ? insumo['sedeId']
+            : DEFAULT_SEDE_ID,
+      };
       if (!externalTypes.has(String(insumo['tipo']))) {
         const { codigoSeguimiento: _codigoSeguimiento, ...interno } = insumo;
-        return interno;
+        return { ...interno, sedeId: withLocation.sedeId };
       }
       return {
-        ...insumo,
+        ...withLocation,
         codigoSeguimiento: ensureTrackingCode(insumo['codigoSeguimiento'], 'INS'),
       };
     }),
@@ -269,6 +392,121 @@ export function normalizeSnapshot(snapshot: InventorySnapshot): InventorySnapsho
       codigoSeguimiento: ensureTrackingCode(equipo['codigoSeguimiento'], 'RED'),
     })),
   };
+}
+
+export class StockShipmentValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StockShipmentValidationError';
+  }
+}
+
+export function applyStockShipment(
+  original: InventorySnapshot,
+  shipment: StockShipmentRequest,
+  destinationName: string,
+  actor: SessionUser,
+): InventorySnapshot {
+  if (
+    !uuidPattern.test(shipment.destinoSedeId) ||
+    shipment.destinoSedeId === DEFAULT_SEDE_ID ||
+    !destinationName.trim()
+  ) {
+    throw new StockShipmentValidationError('El destino debe ser una delegación activa.');
+  }
+  if (
+    !shipment.insumoId.trim() ||
+    !Number.isSafeInteger(shipment.cantidad) ||
+    shipment.cantidad <= 0 ||
+    !shipment.motivo.trim() ||
+    shipment.motivo.length > 500
+  ) {
+    throw new StockShipmentValidationError('Los datos de cantidad y motivo no son válidos.');
+  }
+  const snapshot = normalizeSnapshot(original);
+  const source = snapshot.stock.find((item) => item['id'] === shipment.insumoId);
+  if (!source)
+    throw new StockShipmentValidationError('No se encontró el producto de Casa Central.');
+  if (source['sedeId'] !== DEFAULT_SEDE_ID) {
+    throw new StockShipmentValidationError('Solo se puede enviar stock que esté en Casa Central.');
+  }
+  const available = source['cantidadDisponible'];
+  const minimum = source['stockMinimo'];
+  if (
+    typeof available !== 'number' ||
+    !Number.isSafeInteger(available) ||
+    available < shipment.cantidad
+  ) {
+    throw new StockShipmentValidationError(
+      'La cantidad solicitada supera las existencias disponibles en Casa Central.',
+    );
+  }
+  if (typeof minimum !== 'number' || !Number.isSafeInteger(minimum) || minimum < 0) {
+    throw new StockShipmentValidationError('El stock mínimo del producto no es válido.');
+  }
+
+  const destinationItem = snapshot.stock.find(
+    (item) =>
+      item['tipo'] === source['tipo'] &&
+      item['marca'] === source['marca'] &&
+      item['especificacion'] === source['especificacion'] &&
+      item['sedeId'] === shipment.destinoSedeId,
+  );
+  const destinationItemId =
+    typeof destinationItem?.['id'] === 'string' ? destinationItem['id'] : `stk-${randomUUID()}`;
+  const updatedStock = snapshot.stock.map((item) => {
+    if (item['id'] === source['id']) {
+      return { ...item, cantidadDisponible: available - shipment.cantidad };
+    }
+    if (item['id'] === destinationItemId && destinationItem) {
+      const current = destinationItem['cantidadDisponible'];
+      if (typeof current !== 'number' || !Number.isSafeInteger(current) || current < 0) {
+        throw new StockShipmentValidationError(
+          'El saldo del producto en la delegación no es válido.',
+        );
+      }
+      const newBalance = current + shipment.cantidad;
+      if (!Number.isSafeInteger(newBalance)) {
+        throw new StockShipmentValidationError('El saldo resultante excede el límite permitido.');
+      }
+      return { ...item, cantidadDisponible: newBalance };
+    }
+    return item;
+  });
+
+  if (!destinationItem) {
+    const { codigoSeguimiento: _codigoSeguimiento, ...sourceData } = source;
+    updatedStock.push({
+      ...sourceData,
+      id: destinationItemId,
+      cantidadDisponible: shipment.cantidad,
+      stockMinimo: minimum,
+      sedeId: shipment.destinoSedeId,
+    });
+  }
+
+  const product = [source['tipo'], source['marca'], source['especificacion']]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ');
+  const proposed = normalizeSnapshot({
+    ...snapshot,
+    stock: updatedStock,
+    historial: [
+      {
+        id: `hist-${randomUUID()}`,
+        fecha: new Date().toISOString(),
+        tipo: 'TRANSFERENCIA_STOCK',
+        cantidad: shipment.cantidad,
+        detalle: `${shipment.cantidad} unidades de ${product} enviadas desde Casa Central a ${destinationName}. Motivo: ${shipment.motivo}`,
+        sedeId: DEFAULT_SEDE_ID,
+        sedeDestinoId: shipment.destinoSedeId,
+        insumoId: shipment.insumoId,
+        insumoDestinoId: destinationItemId,
+      },
+      ...snapshot.historial,
+    ],
+  });
+  return attributeHistoryOperators(snapshot, proposed, actor);
 }
 
 export function attributeHistoryOperators(
@@ -338,6 +576,19 @@ export function parsePasswordReset(value: unknown): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const password = (value as Record<string, unknown>)['password'];
   return typeof password === 'string' && password.length >= 12 ? password : null;
+}
+
+export function parseManagedUserUpdate(value: unknown): ManagedUserUpdate | null {
+  if (!isRecord(value) || !isSystemRole(value['role'])) return null;
+
+  const rawAreaId = value['areaId'];
+  if (value['role'] === 'solicitante') {
+    return typeof rawAreaId === 'string' && uuidPattern.test(rawAreaId)
+      ? { role: value['role'], areaId: rawAreaId }
+      : null;
+  }
+  if (rawAreaId !== undefined && rawAreaId !== null) return null;
+  return { role: value['role'], areaId: null };
 }
 
 export function createLoginFailureKey(ipAddress: string, username: string): string {
@@ -583,6 +834,88 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     }
   });
 
+  router.post(
+    '/inventory/stock-transfers',
+    requireInventoryEditor,
+    async (request, response, next) => {
+      const shipment = parseStockShipmentRequest(request.body);
+      if (!shipment) {
+        response.status(400).json({ error: 'Los datos del envío de stock son inválidos.' });
+        return;
+      }
+      const actor = request.session.user;
+      if (!actor) {
+        response.status(401).json({ error: 'Iniciá sesión para continuar.' });
+        return;
+      }
+
+      const client = await pool.connect();
+      let transactionStarted = false;
+      try {
+        await client.query('BEGIN');
+        transactionStarted = true;
+        const current = await client.query<StoredSnapshot>(
+          'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true FOR UPDATE',
+        );
+        const row = current.rows[0];
+        if (!row) throw new Error('No existe el estado inicial del inventario.');
+
+        const destination = await client.query<{ nombre: string }>(
+          `SELECT nombre
+         FROM gestion_it.sedes
+         WHERE id = $1::uuid AND tipo = 'DELEGACION' AND activa = true
+         FOR SHARE`,
+          [shipment.destinoSedeId],
+        );
+        const destinationName = destination.rows[0]?.nombre;
+        if (!destinationName) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(400).json({
+            error: 'Seleccioná una delegación activa como destino del envío.',
+          });
+          return;
+        }
+
+        const payload = applyStockShipment(row.payload, shipment, destinationName, actor);
+        if (!(await hasKnownInventorySedes(client, payload))) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(400).json({ error: 'El inventario contiene una sede inválida.' });
+          return;
+        }
+        if (!hasUniqueTrackingCodes(payload)) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(400).json({
+            error: 'El envío produciría códigos de seguimiento duplicados.',
+          });
+          return;
+        }
+
+        const saved = await client.query<StoredSnapshot>(
+          `UPDATE gestion_it.inventory_snapshot
+         SET payload = $1::jsonb, revision = revision + 1, updated_at = now()
+         WHERE singleton_id = true
+         RETURNING revision::text, payload`,
+          [JSON.stringify(payload)],
+        );
+        await client.query('COMMIT');
+        transactionStarted = false;
+        response.json(saved.rows[0]);
+      } catch (error) {
+        if (transactionStarted) await client.query('ROLLBACK');
+        if (error instanceof StockShipmentValidationError) {
+          response.status(400).json({ error: error.message });
+          return;
+        }
+        next(error);
+      } finally {
+        client.release();
+      }
+    },
+  );
+
   router.put('/inventory', requireInventoryEditor, async (request, response, next) => {
     const { revision, payload } = request.body ?? {};
     if (!Number.isSafeInteger(revision) || !isInventorySnapshot(payload)) {
@@ -620,6 +953,15 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
 
+      if (!areDelegationStockChangesValid(currentRow.payload, payload)) {
+        await client.query('ROLLBACK');
+        response.status(400).json({
+          error:
+            'Los ingresos a delegaciones deben registrarse como envíos desde Casa Central; solo se permiten ajustes de saldo con motivo.',
+        });
+        return;
+      }
+
       const actor = request.session.user;
       if (!actor) {
         response.status(401).json({ error: 'Iniciá sesión para continuar.' });
@@ -631,6 +973,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         normalizeSnapshot(payload),
         actor,
       );
+      if (!(await hasKnownInventorySedes(client, normalized))) {
+        await client.query('ROLLBACK');
+        response.status(400).json({ error: 'El inventario contiene una sede inválida.' });
+        return;
+      }
       if (!hasUniqueTrackingCodes(normalized)) {
         response
           .status(400)
@@ -816,6 +1163,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
       const normalized = normalizeSnapshot(payload);
+      if (!(await hasKnownInventorySedes(client, normalized))) {
+        await client.query('ROLLBACK');
+        response.status(400).json({ error: 'El respaldo contiene una sede inválida.' });
+        return;
+      }
       if (!hasUniqueTrackingCodes(normalized)) {
         await client.query('ROLLBACK');
         response
@@ -844,7 +1196,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
   router.get('/admin/areas', requireAdministrator, async (_request, response, next) => {
     try {
       const result = await pool.query(
-        'SELECT id, nombre FROM gestion_it.areas WHERE activo = true ORDER BY nombre',
+        `SELECT area.id, area.nombre, sede.nombre AS "sedeNombre"
+         FROM gestion_it.areas AS area
+         JOIN gestion_it.sedes AS sede ON sede.id = area.sede_id
+         WHERE area.activo = true
+         ORDER BY sede.nombre, area.nombre`,
       );
       response.json(result.rows);
     } catch (error) {
@@ -856,9 +1212,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     try {
       const result = await pool.query(
         `SELECT u.id, u.username, u.role, u.area_id AS "areaId",
-                a.nombre AS "areaNombre", u.created_at AS "createdAt"
+                a.nombre AS "areaNombre", sede.nombre AS "sedeNombre",
+                u.created_at AS "createdAt"
          FROM gestion_it.app_users AS u
          LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         LEFT JOIN gestion_it.sedes AS sede ON sede.id = a.sede_id
          ORDER BY u.username`,
       );
       response.json(result.rows);
@@ -870,8 +1228,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
   router.get('/admin/operator-audit', requireAdministrator, async (request, response, next) => {
     const from = typeof request.query['from'] === 'string' ? request.query['from'] : null;
     const to = typeof request.query['to'] === 'string' ? request.query['to'] : null;
-    const actorId =
-      typeof request.query['actorId'] === 'string' ? request.query['actorId'] : null;
+    const actorId = typeof request.query['actorId'] === 'string' ? request.query['actorId'] : null;
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     const isValidDate = (value: string | null): boolean =>
       value === null ||
@@ -882,8 +1239,7 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       !isValidDate(from) ||
       !isValidDate(to) ||
       (from !== null && to !== null && from > to) ||
-      (actorId !== null &&
-        !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId))
+      (actorId !== null && !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId))
     ) {
       response.status(400).json({ error: 'Los filtros de auditoría no son válidos.' });
       return;
@@ -1001,6 +1357,111 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
       next(error);
+    }
+  });
+
+  router.patch('/admin/users/:id', requireAdministrator, async (request, response, next) => {
+    const update = parseManagedUserUpdate(request.body);
+    if (!update) {
+      response.status(400).json({
+        error: 'Seleccioná un rol válido y asigná un área activa a las cuentas solicitantes.',
+      });
+      return;
+    }
+
+    const userId = request.params['id'];
+    if (typeof userId !== 'string' || !uuidPattern.test(userId)) {
+      response.status(400).json({ error: 'El identificador de usuario no es válido.' });
+      return;
+    }
+    if (request.session.user?.id === userId) {
+      response.status(409).json({ error: 'No podés editar tu propia cuenta desde esta pantalla.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('gestion_it:admin-user-update'))`);
+      const current = await client.query<{
+        id: string;
+        role: SystemRole;
+        area_id: string | null;
+      }>(
+        `SELECT id, role, area_id
+         FROM gestion_it.app_users
+         WHERE id = $1
+         FOR UPDATE`,
+        [userId],
+      );
+      const existing = current.rows[0];
+      if (!existing) {
+        await client.query('ROLLBACK');
+        response.status(404).json({ error: 'No se encontró el usuario.' });
+        return;
+      }
+
+      if (update.areaId) {
+        const area = await client.query(
+          `SELECT id
+           FROM gestion_it.areas
+           WHERE id = $1 AND activo = true
+           FOR SHARE`,
+          [update.areaId],
+        );
+        if (!area.rows[0]) {
+          await client.query('ROLLBACK');
+          response.status(400).json({ error: 'El área seleccionada no existe o está inactiva.' });
+          return;
+        }
+      }
+
+      if (existing.role === 'admin' && update.role !== 'admin') {
+        const administrators = await client.query(
+          `SELECT id
+           FROM gestion_it.app_users
+           WHERE role = 'admin'
+           FOR UPDATE`,
+        );
+        if (administrators.rows.length <= 1) {
+          await client.query('ROLLBACK');
+          response.status(409).json({ error: 'Debe quedar al menos una cuenta administradora.' });
+          return;
+        }
+      }
+
+      const changed = existing.role !== update.role || existing.area_id !== update.areaId;
+      if (changed) {
+        await client.query(
+          `UPDATE gestion_it.app_users
+           SET role = $2, area_id = $3
+           WHERE id = $1`,
+          [userId, update.role, update.areaId],
+        );
+        await client.query(
+          `DELETE FROM gestion_it.sessions
+           WHERE sess -> 'user' ->> 'id' = $1`,
+          [userId],
+        );
+      }
+
+      await client.query('COMMIT');
+      const result = await pool.query(
+        `SELECT u.id, u.username, u.role, u.area_id AS "areaId",
+                a.nombre AS "areaNombre", sede.nombre AS "sedeNombre",
+                u.created_at AS "createdAt"
+         FROM gestion_it.app_users AS u
+         LEFT JOIN gestion_it.areas AS a ON a.id = u.area_id
+         LEFT JOIN gestion_it.sedes AS sede ON sede.id = a.sede_id
+         WHERE u.id = $1`,
+        [userId],
+      );
+      response.json(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      next(error);
+    } finally {
+      client.release();
     }
   });
 

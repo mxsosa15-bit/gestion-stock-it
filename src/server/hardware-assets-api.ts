@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { requireRoles } from './session-user';
+import { DEFAULT_SEDE_ID } from '../shared/locations';
 
 export const hardwareTypes = [
   'MONITOR',
@@ -20,12 +21,15 @@ export interface HardwareAssetInput {
   especificacion: string | null;
   numeroSerie: string;
   numeroPatrimonio: string | null;
+  sedeId?: string;
 }
 
 export interface HardwareAsset extends HardwareAssetInput {
   id: string;
   fechaRegistro: Date;
 }
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isHardwareType(value: unknown): value is HardwareType {
   return typeof value === 'string' && hardwareTypes.some((type) => type === value);
@@ -41,6 +45,10 @@ export function parseHardwareAsset(value: unknown): HardwareAssetInput | null {
     typeof body['especificacion'] === 'string' ? body['especificacion'].trim() || null : null;
   const numeroSerie = typeof body['numeroSerie'] === 'string' ? body['numeroSerie'].trim() : '';
   const rawNumeroPatrimonio = body['numeroPatrimonio'];
+  const sedeId =
+    typeof body['sedeId'] === 'string' && body['sedeId'].trim()
+      ? body['sedeId'].trim()
+      : DEFAULT_SEDE_ID;
 
   if (
     !isHardwareType(tipo) ||
@@ -48,6 +56,7 @@ export function parseHardwareAsset(value: unknown): HardwareAssetInput | null {
     marca.length > 120 ||
     !numeroSerie ||
     numeroSerie.length > 200 ||
+    !uuidPattern.test(sedeId) ||
     (modelo !== null && modelo.length > 120) ||
     (especificacion !== null && especificacion.length > 500) ||
     (rawNumeroPatrimonio !== null &&
@@ -61,7 +70,7 @@ export function parseHardwareAsset(value: unknown): HardwareAssetInput | null {
     typeof rawNumeroPatrimonio === 'string' ? rawNumeroPatrimonio.trim() || null : null;
   if (numeroPatrimonio && numeroPatrimonio.length > 100) return null;
 
-  return { tipo, marca, modelo, especificacion, numeroSerie, numeroPatrimonio };
+  return { tipo, marca, modelo, especificacion, numeroSerie, numeroPatrimonio, sedeId };
 }
 
 function mapAssetColumns(asset: HardwareAssetInput): unknown[] {
@@ -73,12 +82,14 @@ function mapAssetColumns(asset: HardwareAssetInput): unknown[] {
     asset.especificacion,
     asset.numeroSerie,
     asset.numeroPatrimonio,
+    asset.sedeId ?? DEFAULT_SEDE_ID,
   ];
 }
 
 const requireHardwareManager = requireRoles(['admin', 'operator']);
 const assetSelect = `id, tipo, marca, modelo, especificacion,
                      numero_serie AS "numeroSerie", numero_patrimonio AS "numeroPatrimonio",
+                     sede_id::text AS "sedeId",
                      fecha_registro AS "fechaRegistro"`;
 
 export function createHardwareAssetsApi(pool: Pool): express.Router {
@@ -107,8 +118,8 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
     try {
       const result = await pool.query<HardwareAsset>(
         `INSERT INTO gestion_it.hardware_assets
-           (id, tipo, marca, modelo, especificacion, numero_serie, numero_patrimonio)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (id, tipo, marca, modelo, especificacion, numero_serie, numero_patrimonio, sede_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING ${assetSelect}`,
         mapAssetColumns(asset),
       );
@@ -162,8 +173,8 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
         for (const asset of validAssets) {
           const result = await client.query<HardwareAsset>(
             `INSERT INTO gestion_it.hardware_assets
-             (id, tipo, marca, modelo, especificacion, numero_serie, numero_patrimonio)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (id, tipo, marca, modelo, especificacion, numero_serie, numero_patrimonio, sede_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING ${assetSelect}`,
             mapAssetColumns(asset),
           );

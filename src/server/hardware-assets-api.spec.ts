@@ -18,6 +18,7 @@ describe('parseHardwareAsset', () => {
       especificacion: '24 pulgadas',
       numeroSerie: 'SN-001',
       numeroPatrimonio: 'PAT-001',
+      sedeId: '00000000-0000-4000-8000-000000000001',
     });
   });
 

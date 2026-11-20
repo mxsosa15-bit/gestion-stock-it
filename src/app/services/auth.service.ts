@@ -16,6 +16,7 @@ export type SystemRole = 'admin' | 'operator' | 'solicitante' | 'dashboard';
 export interface ManagedArea {
   id: string;
   nombre: string;
+  sedeNombre: string;
 }
 
 export interface ManagedUser {
@@ -24,6 +25,7 @@ export interface ManagedUser {
   role: SystemRole;
   areaId: string | null;
   areaNombre: string | null;
+  sedeNombre: string | null;
   createdAt: string;
 }
 
@@ -129,6 +131,20 @@ export class AuthService {
       this.http.post<ManagedUser>('/api/admin/users', { username, password, role, areaId }),
     );
     await this.cargarUsuarios();
+  }
+
+  async actualizarUsuario(userId: string, role: SystemRole, areaId: string | null): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.patch<ManagedUser>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+          role,
+          areaId,
+        }),
+      );
+      await this.cargarUsuarios();
+    } catch (error: unknown) {
+      throw new Error(this.getErrorMessage(error, 'No se pudo actualizar el usuario.'));
+    }
   }
 
   async restablecerContrasena(userId: string, password: string): Promise<void> {

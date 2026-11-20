@@ -5,6 +5,7 @@ import {
   parseWorkshopApprovalInput,
   parseWorkshopReturnInput,
   parseWorkshopTransferInput,
+  validateWorkshopReturnEquipment,
 } from './tickets-api';
 
 describe('canRequesterSeeTicketInArea', () => {
@@ -151,12 +152,109 @@ describe('parseWorkshopApprovalInput', () => {
 });
 
 describe('parseWorkshopReturnInput', () => {
-  it('requires a non-blank resolution of at most 10000 characters', () => {
-    expect(parseWorkshopReturnInput({ solucion: '  Fuente reemplazada  ' })).toEqual({
-      solucion: 'Fuente reemplazada',
+  it('records the same equipment returned with the repair resolution', () => {
+    expect(
+      parseWorkshopReturnInput({
+        solucion: '  Se reparó la fuente  ',
+        resultadoEquipo: 'MISMO',
+        equipoDevuelto: ' PC ',
+        identificacionDevuelta: ' SN-1 ',
+      }),
+    ).toEqual({
+      solucion: 'Se reparó la fuente',
+      resultadoEquipo: 'MISMO',
+      equipoDevuelto: 'PC',
+      identificacionDevuelta: 'SN-1',
+      motivoReemplazo: null,
     });
-    expect(parseWorkshopReturnInput({ solucion: '  ' })).toBeNull();
-    expect(parseWorkshopReturnInput({ solucion: 'x'.repeat(10_001) })).toBeNull();
+  });
+
+  it('requires replacement details and a reason when the workshop changes equipment', () => {
+    expect(
+      parseWorkshopReturnInput({
+        solucion: 'Se reemplazó el equipo.',
+        resultadoEquipo: 'REEMPLAZO',
+        equipoDevuelto: 'PC Dell',
+        identificacionDevuelta: 'SN-2',
+        motivoReemplazo: 'La placa madre no tiene reparación.',
+      }),
+    ).toMatchObject({
+      resultadoEquipo: 'REEMPLAZO',
+      identificacionDevuelta: 'SN-2',
+      motivoReemplazo: 'La placa madre no tiene reparación.',
+    });
+    expect(
+      parseWorkshopReturnInput({
+        solucion: 'Se reemplazó el equipo.',
+        resultadoEquipo: 'REEMPLAZO',
+        equipoDevuelto: 'PC Dell',
+        identificacionDevuelta: 'SN-2',
+      }),
+    ).toBeNull();
+    expect(
+      parseWorkshopReturnInput({
+        solucion: 'Se reparó.',
+        resultadoEquipo: 'MISMO',
+        equipoDevuelto: 'PC',
+        identificacionDevuelta: 'SN-1',
+        motivoReemplazo: 'No corresponde',
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects missing return details and oversized resolution text', () => {
+    expect(parseWorkshopReturnInput({ solucion: ' ' })).toBeNull();
+    expect(
+      parseWorkshopReturnInput({
+        solucion: 'x'.repeat(10_001),
+        resultadoEquipo: 'MISMO',
+        equipoDevuelto: 'PC',
+        identificacionDevuelta: 'SN-1',
+      }),
+    ).toBeNull();
     expect(parseWorkshopReturnInput(null)).toBeNull();
+  });
+});
+
+describe('validateWorkshopReturnEquipment', () => {
+  const sentEquipment = 'PC Dell Optiplex';
+  const sentIdentifier = 'SN-ORIGINAL';
+
+  it('requires the original identifier when returning the same equipment', () => {
+    const sameEquipment = parseWorkshopReturnInput({
+      solucion: 'Se reparó.',
+      resultadoEquipo: 'MISMO',
+      equipoDevuelto: sentEquipment,
+      identificacionDevuelta: sentIdentifier,
+    });
+    const mismatchedEquipment = parseWorkshopReturnInput({
+      solucion: 'Se reparó.',
+      resultadoEquipo: 'MISMO',
+      equipoDevuelto: sentEquipment,
+      identificacionDevuelta: 'SN-DISTINTO',
+    });
+
+    if (!sameEquipment || !mismatchedEquipment) throw new Error('Datos de prueba inválidos.');
+    expect(
+      validateWorkshopReturnEquipment(sameEquipment, sentEquipment, sentIdentifier),
+    ).toBeNull();
+    expect(
+      validateWorkshopReturnEquipment(mismatchedEquipment, sentEquipment, sentIdentifier),
+    ).toContain('deben coincidir');
+  });
+
+  it('rejects a replacement reported with the original equipment identifier', () => {
+    const replacement = parseWorkshopReturnInput({
+      solucion: 'Se reemplazó el equipo.',
+      resultadoEquipo: 'REEMPLAZO',
+      equipoDevuelto: 'PC Lenovo',
+      identificacionDevuelta: sentIdentifier,
+      motivoReemplazo: 'Equipo original irreparable.',
+    });
+
+    if (!replacement) throw new Error('Datos de prueba inválidos.');
+    expect(validateWorkshopReturnEquipment(replacement, sentEquipment, sentIdentifier)).toContain(
+      'distinta',
+    );
   });
 });

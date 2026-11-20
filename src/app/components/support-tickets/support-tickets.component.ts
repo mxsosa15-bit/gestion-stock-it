@@ -4,6 +4,7 @@ import {
   Component,
   computed,
   inject,
+  input,
   OnDestroy,
   OnInit,
   PLATFORM_ID,
@@ -41,6 +42,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   private toastTimer?: ReturnType<typeof setTimeout>;
 
   readonly authService = inject(AuthService);
+  readonly sedeId = input<string | null>(null);
   readonly loading = signal(false);
   readonly sending = signal(false);
   readonly busyTicketId = signal<string | null>(null);
@@ -80,6 +82,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       const ticketDate = this.fechaLocal(ticket.fecha_creacion);
       if (this.fechaDesde() && ticketDate < this.fechaDesde()) return false;
       if (this.fechaHasta() && ticketDate > this.fechaHasta()) return false;
+      if (this.sedeId() && ticket.sede_id !== this.sedeId()) return false;
       return true;
     }),
   );
@@ -240,6 +243,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   exportarReporte(): void {
     const headers = [
       'Fecha',
+      'Sede de origen',
       'Estado',
       'Categoría',
       'Asunto',
@@ -251,9 +255,14 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       'Equipo enviado al taller',
       'Identificación',
       'Estado de aprobación',
+      'Resultado del taller',
+      'Equipo entregado',
+      'Identificación entregada',
+      'Motivo del reemplazo',
     ];
     const rows = this.filteredTickets().map((ticket) => [
       ticket.fecha_creacion,
+      ticket.sede_nombre ?? '',
       ticket.estado,
       ticket.categoria,
       ticket.titulo,
@@ -265,6 +274,10 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       ticket.taller?.equipo ?? '',
       ticket.taller?.identificacion ?? '',
       ticket.taller?.estado ?? '',
+      ticket.taller?.resultado_equipo ?? '',
+      ticket.taller?.equipo_devuelto ?? '',
+      ticket.taller?.identificacion_devuelta ?? '',
+      ticket.taller?.motivo_reemplazo ?? '',
     ]);
     const csv = [headers, ...rows]
       .map((row) => row.map((value) => this.celdaCsv(value)).join(','))

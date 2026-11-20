@@ -13,7 +13,7 @@ import {
 import { CommonModule, NgOptimizedImage } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { InventoryService } from './services/inventory.service';
-import { AuthService, type SystemRole } from './services/auth.service';
+import { AuthService, type ManagedUser, type SystemRole } from './services/auth.service';
 import { AssetLabelsComponent } from './components/asset-labels/asset-labels.component';
 import { AreaAssetsExplorerComponent } from './components/area-assets-explorer/area-assets-explorer.component';
 import { SupportTicketsComponent } from './components/support-tickets/support-tickets.component';
@@ -22,9 +22,18 @@ import { OperationsDashboardComponent } from './components/operations-dashboard/
 import { WorkshopTicketsComponent } from './components/workshop-tickets/workshop-tickets.component';
 import { InventoryTransfersComponent } from './components/inventory-transfers/inventory-transfers.component';
 import { OperatorAuditComponent } from './components/operator-audit/operator-audit.component';
+import { OperatorTasksComponent } from './components/operator-tasks/operator-tasks.component';
+import { StockDispatchComponent } from './components/stock-dispatch/stock-dispatch.component';
+import { LocationsService } from './services/locations.service';
+import { OperatorTasksService } from './services/operator-tasks.service';
+import type { NewLocation } from './services/locations.service';
+import { TicketsService } from './services/tickets.service';
+import { HardwareAssetsService } from './services/hardware-assets.service';
+import { DEFAULT_SEDE_ID } from '../shared/locations';
 import {
   EquipoRed,
   EstadoComponenteRetirado,
+  HistorialMovimiento,
   PuestoTrabajo,
   StockInsumo,
   TipoEquipoRed,
@@ -38,6 +47,8 @@ type ModalActivo =
   | 'NUEVO_PUESTO'
   | 'NUEVO_COMPONENTE'
   | 'NUEVO_STOCK'
+  | 'SALDO_INICIAL'
+  | 'AJUSTE_STOCK'
   | 'NUEVO_PISO'
   | 'NUEVA_AREA'
   | 'NUEVO_EQUIPO_RED'
@@ -54,7 +65,8 @@ type VistaActiva =
   | 'PATRIMONIO'
   | 'TICKETS'
   | 'TRANSFERENCIAS'
-  | 'AUDITORIA';
+  | 'AUDITORIA'
+  | 'TAREAS';
 
 type TipoConfirmacion = 'PUESTO' | 'STOCK' | 'PISO' | 'AREA' | 'RED';
 
@@ -96,12 +108,18 @@ interface EditorComponente {
     WorkshopTicketsComponent,
     InventoryTransfersComponent,
     OperatorAuditComponent,
+    OperatorTasksComponent,
+    StockDispatchComponent,
   ],
   templateUrl: './app.html',
 })
 export class App implements OnDestroy {
   inventoryService = inject(InventoryService);
   readonly authService = inject(AuthService);
+  readonly locationsService = inject(LocationsService);
+  readonly operatorTasksService = inject(OperatorTasksService);
+  readonly ticketsService = inject(TicketsService);
+  readonly hardwareAssetsService = inject(HardwareAssetsService);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private toastTimer?: ReturnType<typeof setTimeout>;
   readonly authUsuario = signal('');
@@ -116,6 +134,32 @@ export class App implements OnDestroy {
   readonly usuarioParaRestablecer = signal<string | null>(null);
   readonly nuevaContrasena = signal('');
   readonly usuarioRestableciendo = signal<string | null>(null);
+  readonly usuarioEnEdicion = signal<string | null>(null);
+  readonly usuarioEdicion = signal<{ role: SystemRole; areaId: string }>({
+    role: 'operator',
+    areaId: '',
+  });
+  readonly usuarioActualizando = signal<string | null>(null);
+  readonly sedeSeleccionadaId = signal(DEFAULT_SEDE_ID);
+  readonly sedes = this.locationsService.sedes;
+  readonly sedeSeleccionada = computed(
+    () => this.sedes().find((sede) => sede.id === this.sedeSeleccionadaId()) ?? null,
+  );
+  readonly nuevaSede = signal<NewLocation>({
+    nombre: '',
+    departamento: '',
+    localidad: '',
+    direccion: '',
+  });
+  readonly sedeReporteId = signal('TODAS');
+  readonly creandoSede = signal(false);
+  readonly errorSedes = signal('');
+  readonly insumoEnAjusteId = signal('');
+  readonly cantidadAjuste = signal(0);
+  readonly motivoAjuste = signal('');
+  readonly insumoEnAjuste = computed(
+    () => this.stock().find((item) => item.id === this.insumoEnAjusteId()) ?? null,
+  );
   readonly componenteEnEdicion = signal<EditorComponente | null>(null);
   readonly errorEdicionComponente = signal('');
   readonly guardandoEdicionComponente = signal(false);
@@ -137,8 +181,12 @@ export class App implements OnDestroy {
   private async cargarInventario(): Promise<void> {
     try {
       await this.inventoryService.cargarDesdeServidor();
+      await this.locationsService.cargar();
+      if (!this.sedes().some((sede) => sede.id === this.sedeSeleccionadaId())) {
+        this.sedeSeleccionadaId.set(this.sedes()[0]?.id ?? DEFAULT_SEDE_ID);
+      }
     } catch {
-      // The service exposes the connection error for the sign-in recovery view.
+      if (this.locationsService.error()) this.mostrarToast(this.locationsService.error(), 'error');
     }
   }
 
@@ -232,6 +280,7 @@ export class App implements OnDestroy {
       TICKETS: 'Reclamos de soporte',
       TRANSFERENCIAS: 'Transferencias y mudanzas',
       AUDITORIA: 'Auditoría de operadores',
+      TAREAS: 'Bitácora de tareas',
     };
     return titulos[this.vistaActiva()];
   });
@@ -289,33 +338,60 @@ export class App implements OnDestroy {
   );
 
   // Señales del servicio
-  puestos = this.inventoryService.puestos;
-  stock = this.inventoryService.stock;
+  readonly pisos = computed(() =>
+    this.inventoryService
+      .pisos()
+      .filter((piso) => (piso.sedeId ?? DEFAULT_SEDE_ID) === this.sedeSeleccionadaId()),
+  );
+  readonly areas = computed(() => {
+    const pisoIds = new Set(this.pisos().map((piso) => piso.id));
+    return this.inventoryService.areas().filter((area) => pisoIds.has(area.pisoId));
+  });
+  readonly puestos = computed(() => {
+    const areaIds = new Set(this.areas().map((area) => area.id));
+    return this.inventoryService.puestos().filter((puesto) => areaIds.has(puesto.areaId));
+  });
+  readonly stock = computed(() =>
+    this.inventoryService
+      .stock()
+      .filter((insumo) => (insumo.sedeId ?? DEFAULT_SEDE_ID) === this.sedeSeleccionadaId()),
+  );
+  readonly equiposRed = computed(() => {
+    const areaIds = new Set(this.areas().map((area) => area.id));
+    return this.inventoryService.equiposRed().filter((equipo) => areaIds.has(equipo.areaId));
+  });
+  readonly componentesRetirados = computed(() => {
+    const puestosPorId = new Map(
+      this.inventoryService.puestos().map((puesto) => [puesto.id, puesto]),
+    );
+    return this.inventoryService.componentesRetirados().filter((componente) => {
+      const puesto = puestosPorId.get(componente.puestoId);
+      const area = puesto
+        ? this.inventoryService.areas().find((item) => item.id === puesto.areaId)
+        : undefined;
+      const piso = area
+        ? this.inventoryService.pisos().find((item) => item.id === area.pisoId)
+        : undefined;
+      return (componente.sedeId ?? piso?.sedeId ?? DEFAULT_SEDE_ID) === this.sedeSeleccionadaId();
+    });
+  });
   historial = this.inventoryService.historial;
   readonly movimientosVisibles = signal(10);
-  readonly historialVisible = computed(() =>
-    this.historial().slice(0, this.movimientosVisibles()),
-  );
-  pisos = this.inventoryService.pisos;
-  areas = this.inventoryService.areas;
-  equiposRed = this.inventoryService.equiposRed;
-  componentesRetirados = this.inventoryService.componentesRetirados;
+  readonly historialVisible = computed(() => this.historial().slice(0, this.movimientosVisibles()));
   readonly inventarioVacio = computed(() =>
     [
-      this.pisos(),
-      this.areas(),
-      this.stock(),
-      this.puestos(),
-      this.equiposRed(),
-      this.componentesRetirados(),
-      this.historial(),
+      this.inventoryService.pisos(),
+      this.inventoryService.areas(),
+      this.inventoryService.stock(),
+      this.inventoryService.puestos(),
+      this.inventoryService.equiposRed(),
+      this.inventoryService.componentesRetirados(),
+      this.inventoryService.historial(),
     ].every((coleccion) => coleccion.length === 0),
   );
 
   mostrarMasActividad(): void {
-    this.movimientosVisibles.update((cantidad) =>
-      Math.min(cantidad + 10, this.historial().length),
-    );
+    this.movimientosVisibles.update((cantidad) => Math.min(cantidad + 10, this.historial().length));
   }
 
   // Filtros parque
@@ -536,6 +612,47 @@ export class App implements OnDestroy {
     }
   }
 
+  cambiarSede(sedeId: string): void {
+    if (!this.sedes().some((sede) => sede.id === sedeId)) return;
+    this.sedeSeleccionadaId.set(sedeId);
+    this.pisoSeleccionadoId.set('TODOS');
+    this.areaSeleccionadaId.set('TODAS');
+    this.pisoSeleccionadoEdificio.set('');
+    this.pisoSeleccionadoFormPuesto.set('');
+    this.pisoSeleccionadoFormEquipoRed.set('');
+  }
+
+  async crearSede(): Promise<void> {
+    const sede = this.nuevaSede();
+    if (!sede.nombre.trim()) {
+      this.errorSedes.set('Ingresá el nombre de la delegación.');
+      return;
+    }
+    this.errorSedes.set('');
+    this.creandoSede.set(true);
+    try {
+      const creada = await this.locationsService.crear({
+        nombre: sede.nombre.trim(),
+        departamento: sede.departamento.trim(),
+        localidad: sede.localidad.trim(),
+        direccion: sede.direccion.trim(),
+      });
+      this.nuevaSede.set({ nombre: '', departamento: '', localidad: '', direccion: '' });
+      this.cambiarSede(creada.id);
+      this.mostrarToast(
+        `Se creó la sede ${creada.nombre}. Ahora podés cargar su piso y sus áreas.`,
+      );
+    } catch (error: unknown) {
+      this.errorSedes.set(error instanceof Error ? error.message : 'No se pudo crear la sede.');
+    } finally {
+      this.creandoSede.set(false);
+    }
+  }
+
+  actualizarNuevaSede(campo: keyof NewLocation, valor: string): void {
+    this.nuevaSede.update((actual) => ({ ...actual, [campo]: valor }));
+  }
+
   private async cargarUsuarios(): Promise<void> {
     try {
       await Promise.all([this.authService.cargarUsuarios(), this.authService.cargarAreas()]);
@@ -593,6 +710,63 @@ export class App implements OnDestroy {
     }
   }
 
+  iniciarEdicionUsuario(usuario: ManagedUser): void {
+    this.usuarioEnEdicion.set(usuario.id);
+    this.usuarioEdicion.set({ role: usuario.role, areaId: usuario.areaId ?? '' });
+    this.usuarioParaRestablecer.set(null);
+    this.nuevaContrasena.set('');
+  }
+
+  actualizarEdicionUsuario(campo: 'role' | 'areaId', valor: string): void {
+    if (campo === 'areaId') {
+      this.usuarioEdicion.update((usuario) => ({ ...usuario, areaId: valor }));
+      return;
+    }
+    if (
+      valor !== 'admin' &&
+      valor !== 'operator' &&
+      valor !== 'solicitante' &&
+      valor !== 'dashboard'
+    ) {
+      return;
+    }
+    this.usuarioEdicion.update((usuario) => ({
+      role: valor,
+      areaId: valor === 'solicitante' ? usuario.areaId : '',
+    }));
+  }
+
+  cancelarEdicionUsuario(): void {
+    this.usuarioEnEdicion.set(null);
+  }
+
+  async guardarEdicionUsuario(usuarioId: string): Promise<void> {
+    if (this.usuarioEnEdicion() !== usuarioId) return;
+    const edicion = this.usuarioEdicion();
+    if (edicion.role === 'solicitante' && !edicion.areaId) {
+      this.mostrarToast('Seleccioná un área para la cuenta solicitante.', 'error');
+      return;
+    }
+
+    this.usuarioActualizando.set(usuarioId);
+    try {
+      await this.authService.actualizarUsuario(
+        usuarioId,
+        edicion.role,
+        edicion.role === 'solicitante' ? edicion.areaId : null,
+      );
+      this.usuarioEnEdicion.set(null);
+      this.mostrarToast('Se actualizaron los permisos y el área del usuario.');
+    } catch (error: unknown) {
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudo actualizar el usuario.',
+        'error',
+      );
+    } finally {
+      this.usuarioActualizando.set(null);
+    }
+  }
+
   actualizarNuevoUsuario(campo: 'username' | 'password' | 'role' | 'areaId', valor: string): void {
     if (
       campo === 'role' &&
@@ -647,6 +821,12 @@ export class App implements OnDestroy {
       this.nuevoStock.marca = '';
       this.nuevoStock.especificacion = '';
       this.nuevoStock.cantidadDisponible = 1;
+    } else if (modal === 'SALDO_INICIAL') {
+      this.nuevoStock.marca = '';
+      this.nuevoStock.especificacion = '';
+      this.nuevoStock.cantidadDisponible = 0;
+    } else if (modal === 'AJUSTE_STOCK') {
+      this.motivoAjuste.set('');
     }
     this.modalActivo.set(modal);
   }
@@ -917,7 +1097,11 @@ export class App implements OnDestroy {
       return;
     }
     try {
-      const piso = this.inventoryService.crearPiso(nombre, this.nuevoPiso.nivel);
+      const piso = this.inventoryService.crearPiso(
+        nombre,
+        this.nuevoPiso.nivel,
+        this.sedeSeleccionadaId(),
+      );
       await this.inventoryService.guardarEnServidor();
       this.pisoSeleccionadoEdificio.set(piso.id);
       this.nuevoPiso = { nombre: '', nivel: this.nuevoPiso.nivel + 1 };
@@ -951,6 +1135,12 @@ export class App implements OnDestroy {
   }
 
   async guardarNuevoStock(): Promise<void> {
+    if (this.sedeSeleccionada()?.tipo !== 'CENTRAL') {
+      this.errorFormulario.set(
+        'Los ingresos de stock se registran en Casa Central y se envían a las delegaciones.',
+      );
+      return;
+    }
     const marca = this.nuevoStock.marca.trim();
     const especificacion = this.nuevoStock.especificacion.trim();
     const cantidad = Number(this.nuevoStock.cantidadDisponible);
@@ -959,12 +1149,15 @@ export class App implements OnDestroy {
       return;
     }
     try {
-      this.inventoryService.agregarInsumoStock({
-        ...this.nuevoStock,
-        marca,
-        especificacion,
-        cantidadDisponible: cantidad,
-      });
+      this.inventoryService.agregarInsumoStock(
+        {
+          ...this.nuevoStock,
+          marca,
+          especificacion,
+          cantidadDisponible: cantidad,
+        },
+        this.sedeSeleccionadaId(),
+      );
       await this.inventoryService.guardarEnServidor();
       this.nuevoStock.marca = '';
       this.nuevoStock.especificacion = '';
@@ -974,6 +1167,71 @@ export class App implements OnDestroy {
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo guardar el stock.',
+      );
+    }
+  }
+
+  async guardarSaldoInicial(): Promise<void> {
+    if (this.sedeSeleccionada()?.tipo !== 'CENTRAL') {
+      this.errorFormulario.set(
+        'El saldo inicial se registra en Casa Central; las delegaciones reciben stock mediante envíos.',
+      );
+      return;
+    }
+    const marca = this.nuevoStock.marca.trim();
+    const especificacion = this.nuevoStock.especificacion.trim();
+    const cantidad = Number(this.nuevoStock.cantidadDisponible);
+    if (
+      !marca ||
+      !especificacion ||
+      !Number.isInteger(cantidad) ||
+      cantidad < 0 ||
+      !Number.isInteger(this.nuevoStock.stockMinimo) ||
+      this.nuevoStock.stockMinimo < 0
+    ) {
+      this.errorFormulario.set(
+        'Ingresá el producto y un saldo y mínimo enteros iguales o mayores que cero.',
+      );
+      return;
+    }
+    try {
+      this.inventoryService.registrarSaldoInicial(
+        { ...this.nuevoStock, marca, especificacion, cantidadDisponible: cantidad },
+        this.sedeSeleccionadaId(),
+      );
+      await this.inventoryService.guardarEnServidor();
+      this.nuevoStock.marca = '';
+      this.nuevoStock.especificacion = '';
+      this.nuevoStock.cantidadDisponible = 0;
+      this.cerrarModal();
+      this.mostrarToast('Se registró el saldo inicial de la sede.');
+    } catch (error: unknown) {
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo guardar el saldo inicial.',
+      );
+    }
+  }
+
+  abrirAjusteStock(insumo: StockInsumo): void {
+    this.insumoEnAjusteId.set(insumo.id);
+    this.cantidadAjuste.set(insumo.cantidadDisponible);
+    this.motivoAjuste.set('');
+    this.abrirModal('AJUSTE_STOCK');
+  }
+
+  async guardarAjusteStock(): Promise<void> {
+    try {
+      this.inventoryService.ajustarStock(
+        this.insumoEnAjusteId(),
+        Number(this.cantidadAjuste()),
+        this.motivoAjuste(),
+      );
+      await this.inventoryService.guardarEnServidor();
+      this.cerrarModal();
+      this.mostrarToast('Se ajustó el saldo y quedó registrado el motivo.');
+    } catch (error: unknown) {
+      this.errorFormulario.set(
+        error instanceof Error ? error.message : 'No se pudo ajustar el inventario.',
       );
     }
   }
@@ -1216,7 +1474,81 @@ export class App implements OnDestroy {
   async exportarInventarioExcel(): Promise<void> {
     try {
       const { default: XLSX } = await import('xlsx-js-style');
+      const sedeFiltro = this.sedeReporteId();
+      const incluirSede = (sedeId: string | null | undefined): boolean =>
+        sedeFiltro === 'TODAS' || sedeId === sedeFiltro;
+      const nombreSede = (sedeId: string | null | undefined): string =>
+        this.sedes().find((sede) => sede.id === sedeId)?.nombre ??
+        (sedeId === DEFAULT_SEDE_ID ? 'Casa Central' : 'Sede no identificada');
+      const pisosPorId = new Map(this.inventoryService.pisos().map((piso) => [piso.id, piso]));
+      const areasTodos = this.inventoryService.areas().filter((area) => {
+        const piso = pisosPorId.get(area.pisoId);
+        return incluirSede(piso?.sedeId ?? DEFAULT_SEDE_ID);
+      });
+      const areasPorId = new Map(this.inventoryService.areas().map((area) => [area.id, area]));
+      const sedeDeArea = (areaId: string): string => {
+        const area = areasPorId.get(areaId);
+        return area ? (pisosPorId.get(area.pisoId)?.sedeId ?? DEFAULT_SEDE_ID) : DEFAULT_SEDE_ID;
+      };
+      const puestosTodos = this.inventoryService
+        .puestos()
+        .filter((puesto) => incluirSede(sedeDeArea(puesto.areaId)));
+      const stockTodos = this.inventoryService
+        .stock()
+        .filter((insumo) => incluirSede(insumo.sedeId ?? DEFAULT_SEDE_ID));
+      const stockPorId = new Map(
+        this.inventoryService.stock().map((insumo) => [insumo.id, insumo]),
+      );
+      const puestosPorId = new Map(
+        this.inventoryService.puestos().map((puesto) => [puesto.id, puesto]),
+      );
+      const equiposRedTodos = this.inventoryService
+        .equiposRed()
+        .filter((equipo) => incluirSede(sedeDeArea(equipo.areaId)));
+      const equiposRedPorId = new Map(
+        this.inventoryService.equiposRed().map((equipo) => [equipo.id, equipo]),
+      );
+      const retiradosTodos = this.inventoryService.componentesRetirados().filter((componente) => {
+        const puesto = puestosPorId.get(componente.puestoId);
+        const sedeId =
+          componente.sedeId ?? (puesto ? sedeDeArea(puesto.areaId) : undefined) ?? DEFAULT_SEDE_ID;
+        return incluirSede(sedeId);
+      });
+      const [tickets, hardwareAssets] = await Promise.all([
+        this.ticketsService.listar(),
+        this.hardwareAssetsService.listar(),
+        this.operatorTasksService.cargar(),
+      ]);
+      const tareas = this.operatorTasksService.tasks().filter((task) => incluirSede(task.sedeId));
+      const reclamos = tickets.filter((ticket) => incluirSede(ticket.sede_id));
+      const hardwareAssetsTodos = hardwareAssets.filter((asset) =>
+        incluirSede(asset.sedeId ?? DEFAULT_SEDE_ID),
+      );
+      const sedeDeMovimiento = (movimiento: HistorialMovimiento): string | undefined => {
+        if (movimiento.sedeId) return movimiento.sedeId;
+        if (movimiento.insumoId) {
+          const insumo = stockPorId.get(movimiento.insumoId);
+          return insumo ? (insumo.sedeId ?? DEFAULT_SEDE_ID) : undefined;
+        }
+        if (movimiento.puestoId) {
+          const puesto = puestosPorId.get(movimiento.puestoId);
+          return puesto ? sedeDeArea(puesto.areaId) : undefined;
+        }
+        if (movimiento.equipoRedId) {
+          const equipo = equiposRedPorId.get(movimiento.equipoRedId);
+          return equipo ? sedeDeArea(equipo.areaId) : undefined;
+        }
+        return undefined;
+      };
+      const historialTodos = this.inventoryService.historial().filter((movimiento) => {
+        const sedeId = sedeDeMovimiento(movimiento);
+        if (movimiento.sedeDestinoId) {
+          return incluirSede(movimiento.sedeId ?? sedeId) || incluirSede(movimiento.sedeDestinoId);
+        }
+        return sedeId ? incluirSede(sedeId) : sedeFiltro === 'TODAS';
+      });
       const encabezadosPuestos = [
+        'Sede',
         'PISO',
         'Área',
         'MONITOR',
@@ -1235,9 +1567,9 @@ export class App implements OnDestroy {
         'ACCION',
         'Observaciones',
       ];
-      const filasPuestos = this.puestos().map((puesto) => {
-        const area = this.areas().find((item) => item.id === puesto.areaId);
-        const piso = area ? this.pisos().find((item) => item.id === area.pisoId) : undefined;
+      const filasPuestos = puestosTodos.map((puesto) => {
+        const area = areasPorId.get(puesto.areaId);
+        const piso = area ? pisosPorId.get(area.pisoId) : undefined;
         const componentes = puesto.componentes;
         const componentesDeTipo = (tipo: TipoPeriferico): string =>
           componentes
@@ -1251,7 +1583,7 @@ export class App implements OnDestroy {
           ? `${procesador.marca} ${procesador.modelo ?? ''} ${procesador.especificacion}`.toLocaleLowerCase()
           : '';
         const velocidadReloj = fabricanteProcesador.match(/\d+(?:[.,]\d+)?\s*ghz/i)?.[0] ?? '';
-        const movimientosPuesto = this.historial().filter(
+        const movimientosPuesto = historialTodos.filter(
           (movimiento) => movimiento.puestoId === puesto.id,
         );
         const ultimoMovimiento = movimientosPuesto.reduce<
@@ -1273,6 +1605,7 @@ export class App implements OnDestroy {
             : '';
 
         return [
+          nombreSede(piso?.sedeId ?? DEFAULT_SEDE_ID),
           piso?.nivel ?? '',
           area?.nombre ?? 'Área no asignada',
           componentesDeTipo('MONITOR'),
@@ -1293,7 +1626,8 @@ export class App implements OnDestroy {
         ];
       });
 
-      const filasStock = this.stock().map((insumo) => [
+      const filasStock = stockTodos.map((insumo) => [
+        nombreSede(insumo.sedeId ?? DEFAULT_SEDE_ID),
         insumo.id,
         insumo.tipo,
         insumo.marca,
@@ -1302,15 +1636,192 @@ export class App implements OnDestroy {
         insumo.stockMinimo,
       ]);
 
-      const libro = XLSX.utils.book_new();
-      const hojaPuestos = XLSX.utils.aoa_to_sheet([encabezadosPuestos, ...filasPuestos]);
-      const hojaStock = XLSX.utils.aoa_to_sheet([
-        ['ID Insumo', 'Tipo', 'Marca', 'Especificación', 'Cantidad disponible', 'Stock mínimo'],
-        ...filasStock,
+      const filasEquiposRed = equiposRedTodos.map((equipo) => [
+        nombreSede(sedeDeArea(equipo.areaId)),
+        areasPorId.get(equipo.areaId)?.nombre ?? '',
+        equipo.tipo,
+        equipo.marca,
+        equipo.modelo,
+        equipo.codigoSeguimiento,
       ]);
-
-      XLSX.utils.book_append_sheet(libro, hojaPuestos, 'Puestos');
-      XLSX.utils.book_append_sheet(libro, hojaStock, 'Stock');
+      const filasTareas = tareas.map((task) => [
+        task.createdAt,
+        task.sedeNombre || nombreSede(task.sedeId),
+        task.tipo,
+        task.titulo,
+        task.descripcion,
+        task.operador,
+        task.duracionMinutos ?? '',
+      ]);
+      const filasHardwarePatrimonial = hardwareAssetsTodos.map((asset) => [
+        nombreSede(asset.sedeId ?? DEFAULT_SEDE_ID),
+        asset.tipo,
+        asset.marca,
+        asset.modelo ?? '',
+        asset.especificacion ?? '',
+        asset.numeroSerie,
+        asset.numeroPatrimonio ?? '',
+        asset.fechaRegistro,
+      ]);
+      const filasReclamos = reclamos.map((ticket) => [
+        ticket.fecha_creacion,
+        ticket.sede_nombre ?? nombreSede(ticket.sede_id),
+        ticket.area_nombre ?? '',
+        ticket.estado,
+        ticket.categoria,
+        ticket.titulo,
+        ticket.descripcion,
+        ticket.usuario_nombre,
+        ticket.nombre_afectado ?? '',
+        ticket.solucion ?? '',
+        ticket.taller?.equipo ?? '',
+        ticket.taller?.identificacion ?? '',
+        ticket.taller?.estado ?? '',
+        ticket.taller?.resultado_equipo ?? '',
+        ticket.taller?.equipo_devuelto ?? '',
+        ticket.taller?.identificacion_devuelta ?? '',
+        ticket.taller?.motivo_reemplazo ?? '',
+      ]);
+      const filasHistorial = historialTodos.map((movimiento) => [
+        movimiento.fecha,
+        nombreSede(movimiento.sedeId ?? sedeDeMovimiento(movimiento) ?? null),
+        movimiento.sedeDestinoId ? nombreSede(movimiento.sedeDestinoId) : '',
+        movimiento.operador ?? '',
+        movimiento.tipo,
+        movimiento.cantidad,
+        movimiento.detalle,
+      ]);
+      const filasAreas = areasTodos.map((area) => {
+        const piso = pisosPorId.get(area.pisoId);
+        return [
+          nombreSede(piso?.sedeId ?? DEFAULT_SEDE_ID),
+          piso?.nombre ?? '',
+          piso?.nivel ?? '',
+          area.nombre,
+        ];
+      });
+      const sedesIncluidas = this.sedes().filter((sede) => incluirSede(sede.id));
+      const libro = XLSX.utils.book_new();
+      const tablas = [
+        {
+          nombre: 'Sedes',
+          encabezados: ['Sede', 'Tipo', 'Departamento', 'Localidad', 'Dirección'],
+          filas: sedesIncluidas.map((sede) => [
+            sede.nombre,
+            sede.tipo,
+            sede.departamento,
+            sede.localidad,
+            sede.direccion,
+          ]),
+        },
+        {
+          nombre: 'Pisos y áreas',
+          encabezados: ['Sede', 'Piso', 'Nivel', 'Área'],
+          filas: filasAreas,
+        },
+        { nombre: 'Puestos', encabezados: encabezadosPuestos, filas: filasPuestos },
+        {
+          nombre: 'Stock',
+          encabezados: [
+            'Sede',
+            'ID Insumo',
+            'Tipo',
+            'Marca',
+            'Especificación',
+            'Cantidad disponible',
+            'Stock mínimo',
+          ],
+          filas: filasStock,
+        },
+        {
+          nombre: 'Equipos de red',
+          encabezados: ['Sede', 'Área', 'Tipo', 'Marca', 'Modelo', 'Código'],
+          filas: filasEquiposRed,
+        },
+        {
+          nombre: 'Hardware patrimonial',
+          encabezados: [
+            'Sede',
+            'Tipo',
+            'Marca',
+            'Modelo',
+            'Especificación',
+            'Número de serie',
+            'Número patrimonial',
+            'Fecha de registro',
+          ],
+          filas: filasHardwarePatrimonial,
+        },
+        {
+          nombre: 'Componentes retirados',
+          encabezados: [
+            'Sede',
+            'Puesto',
+            'Tipo',
+            'Marca',
+            'Modelo',
+            'Especificación',
+            'Estado',
+            'Fecha de retiro',
+          ],
+          filas: retiradosTodos.map((item) => {
+            const puesto = puestosPorId.get(item.puestoId);
+            return [
+              nombreSede(
+                item.sedeId ?? (puesto ? sedeDeArea(puesto.areaId) : undefined) ?? DEFAULT_SEDE_ID,
+              ),
+              item.puestoNombre,
+              item.componente.tipo,
+              item.componente.marca,
+              item.componente.modelo ?? '',
+              item.componente.especificacion,
+              item.estado,
+              item.fechaRetiro,
+            ];
+          }),
+        },
+        {
+          nombre: 'Tareas',
+          encabezados: ['Fecha', 'Sede', 'Tipo', 'Tarea', 'Detalle', 'Operador', 'Duración (min)'],
+          filas: filasTareas,
+        },
+        {
+          nombre: 'Reclamos',
+          encabezados: [
+            'Fecha',
+            'Sede',
+            'Área',
+            'Estado',
+            'Categoría',
+            'Asunto',
+            'Descripción',
+            'Solicitante',
+            'Puesto o usuario afectado',
+            'Solución',
+            'Equipo enviado al taller',
+            'Identificación',
+            'Estado de aprobación',
+            'Resultado del taller',
+            'Equipo entregado',
+            'Identificación entregada',
+            'Motivo del reemplazo',
+          ],
+          filas: filasReclamos,
+        },
+        {
+          nombre: 'Historial',
+          encabezados: [
+            'Fecha',
+            'Sede de origen',
+            'Sede de destino',
+            'Operador',
+            'Movimiento',
+            'Cantidad',
+            'Detalle',
+          ],
+          filas: filasHistorial,
+        },
+      ];
       const estiloEncabezado = {
         fill: { fgColor: { rgb: '26365B' } },
         font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
@@ -1355,59 +1866,48 @@ export class App implements OnDestroy {
         hoja['!rows'] = [{ hpt: 32 }];
       };
 
-      aplicarEstiloTabla(hojaPuestos, filasPuestos.length, encabezadosPuestos.length);
-      aplicarEstiloTabla(hojaStock, filasStock.length, 6);
-      hojaPuestos['!cols'] = [
-        { wch: 8 },
-        { wch: 24 },
-        { wch: 24 },
-        { wch: 22 },
-        { wch: 22 },
-        { wch: 18 },
-        { wch: 22 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 18 },
-        { wch: 20 },
-        { wch: 22 },
-        { wch: 20 },
-        { wch: 18 },
-        { wch: 32 },
-        { wch: 24 },
-        { wch: 60 },
-      ];
-      hojaPuestos['!autofilter'] = {
-        ref: XLSX.utils.encode_range({
-          s: { r: 0, c: 0 },
-          e: { r: filasPuestos.length, c: encabezadosPuestos.length - 1 },
-        }),
-      };
-      hojaStock['!cols'] = [
-        { wch: 18 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 32 },
-        { wch: 22 },
-        { wch: 16 },
-      ];
-      for (let fila = 0; fila < filasStock.length; fila++) {
-        const insumo = this.stock()[fila];
-        const celdaCantidad = hojaStock[XLSX.utils.encode_cell({ r: fila + 1, c: 4 })];
-        if (insumo && celdaCantidad && insumo.cantidadDisponible <= insumo.stockMinimo) {
-          celdaCantidad.s = {
-            ...estiloCelda,
-            fill: { fgColor: { rgb: 'FFF0EF' } },
-            font: { bold: true, color: { rgb: 'B42318' }, sz: 10 },
-          };
+      const hojas = new Map<string, WorkSheet>();
+      for (const tabla of tablas) {
+        const hoja = XLSX.utils.aoa_to_sheet([tabla.encabezados, ...tabla.filas]);
+        XLSX.utils.book_append_sheet(libro, hoja, tabla.nombre);
+        aplicarEstiloTabla(hoja, tabla.filas.length, tabla.encabezados.length);
+        hoja['!cols'] = tabla.encabezados.map((header, index) => {
+          const longest = Math.max(
+            header.length,
+            ...tabla.filas.slice(0, 100).map((fila) => String(fila[index] ?? '').length),
+          );
+          return { wch: Math.min(Math.max(longest + 2, 12), 60) };
+        });
+        hoja['!autofilter'] = {
+          ref: XLSX.utils.encode_range({
+            s: { r: 0, c: 0 },
+            e: { r: tabla.filas.length, c: tabla.encabezados.length - 1 },
+          }),
+        };
+        hojas.set(tabla.nombre, hoja);
+      }
+      const hojaStock = hojas.get('Stock');
+      if (hojaStock) {
+        for (let fila = 0; fila < filasStock.length; fila++) {
+          const insumo = stockTodos[fila];
+          const celdaCantidad = hojaStock[XLSX.utils.encode_cell({ r: fila + 1, c: 5 })];
+          if (insumo && celdaCantidad && insumo.cantidadDisponible <= insumo.stockMinimo) {
+            celdaCantidad.s = {
+              ...estiloCelda,
+              fill: { fgColor: { rgb: 'FFF0EF' } },
+              font: { bold: true, color: { rgb: 'B42318' }, sz: 10 },
+            };
+          }
         }
       }
-      hojaStock['!autofilter'] = {
-        ref: XLSX.utils.encode_range({
-          s: { r: 0, c: 0 },
-          e: { r: filasStock.length, c: 5 },
-        }),
-      };
-      XLSX.writeFile(libro, `inventario-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const sufijo =
+        sedeFiltro === 'TODAS'
+          ? 'todas-las-sedes'
+          : (this.sedes()
+              .find((sede) => sede.id === sedeFiltro)
+              ?.nombre.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-') ?? 'sede');
+      XLSX.writeFile(libro, `gestion-it-${sufijo}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (error: unknown) {
       const mensaje =
         error instanceof Error ? error.message : 'No se pudo generar el archivo Excel.';

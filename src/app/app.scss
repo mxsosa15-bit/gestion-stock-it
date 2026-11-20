@@ -280,6 +280,35 @@ button {
   white-space: nowrap;
 }
 
+.site-selector,
+.report-site-filter {
+  display: grid;
+  min-width: 190px;
+  gap: 4px;
+  color: #64728a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.site-selector select,
+.report-site-filter select {
+  min-height: 34px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #293650;
+  background: #fff;
+  font: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.report-site-filter {
+  min-width: 160px;
+}
+
 .user-menu {
   display: inline-flex;
   min-height: 34px;
@@ -1535,6 +1564,33 @@ select:disabled {
   color: var(--muted);
 }
 
+.admin-user-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.user-edit-form {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-edit-form label {
+  display: grid;
+  min-width: min(100%, 220px);
+  gap: 5px;
+  color: #778198;
+  font-size: 11px;
+}
+
+.user-edit-form select {
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
 .user-password-reset {
   display: flex;
   grid-column: 1 / -1;
@@ -1920,8 +1976,17 @@ select:disabled {
     grid-template-columns: 1fr;
   }
 
+  .admin-user-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .admin-user-details {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .user-edit-form {
+    align-items: stretch;
   }
 
   .user-password-reset {

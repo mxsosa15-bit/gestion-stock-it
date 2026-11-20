@@ -117,16 +117,28 @@
   font-weight: 650;
 }
 
+.workshop-ticket-card input,
+.workshop-ticket-card select,
 .workshop-ticket-card textarea {
   width: 100%;
-  min-height: 80px;
   padding: 10px;
   border: 1px solid #cbd2df;
   border-radius: 8px;
   color: #292d3d;
   font: inherit;
-  resize: vertical;
   box-sizing: border-box;
+}
+
+.workshop-ticket-card textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.return-same-equipment {
+  margin: 0;
+  color: #687087;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .return-button {

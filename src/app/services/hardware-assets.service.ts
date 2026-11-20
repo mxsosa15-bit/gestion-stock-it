@@ -11,6 +11,7 @@ export interface HardwareAssetInput {
   especificacion: string | null;
   numeroSerie: string;
   numeroPatrimonio: string | null;
+  sedeId?: string;
 }
 
 export interface HardwareAsset extends HardwareAssetInput {

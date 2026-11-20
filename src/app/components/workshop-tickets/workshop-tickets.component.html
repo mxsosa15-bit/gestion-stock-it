@@ -2,7 +2,10 @@
   <div class="section-heading">
     <div>
       <h3 id="workshop-tickets-title">Equipos derivados desde reclamos</h3>
-      <p>Al registrar la devolución, el reclamo se termina y queda guardada la solución.</p>
+      <p>
+        Casa Central recibe equipos de todas las sedes; al registrar la devolución, el reclamo se
+        termina con la solución y el detalle del equipo entregado.
+      </p>
     </div>
     <button type="button" class="refresh-button" (click)="reintentar()">Actualizar</button>
   </div>
@@ -15,16 +18,19 @@
   }
   @if (loading()) {
     <p class="empty-message" role="status">Cargando equipos derivados…</p>
-  } @else if (tickets().length === 0) {
+  } @else if (ticketsEnSede().length === 0) {
     <p class="empty-message">No hay equipos aprobados que estén actualmente en taller.</p>
   } @else {
     <div class="workshop-ticket-list">
-      @for (ticket of tickets(); track ticket.id) {
+      @for (ticket of ticketsEnSede(); track ticket.id) {
         @if (ticket.taller; as transfer) {
           <article class="workshop-ticket-card">
             <header>
               <div>
-                <span class="ticket-category">{{ ticket.categoria }} · {{ ticket.area_nombre ?? 'Sin área' }}</span>
+                <span class="ticket-category"
+                  >{{ ticket.categoria }} · {{ ticket.sede_nombre ?? 'Sede no identificada' }} ·
+                  {{ ticket.area_nombre ?? 'Sin área' }}</span
+                >
                 <h4>{{ ticket.titulo }}</h4>
               </div>
               <span class="workshop-state">En taller</span>
@@ -41,6 +47,8 @@
               <dd>{{ ticket.usuario_nombre }}</dd>
               <dt>Área</dt>
               <dd>{{ ticket.area_nombre ?? 'Sin área' }}</dd>
+              <dt>Sede de origen</dt>
+              <dd>{{ ticket.sede_nombre ?? 'Sede no identificada' }}</dd>
               <dt>Puesto afectado</dt>
               <dd>{{ ticket.nombre_afectado ?? 'No especificado' }}</dd>
               <dt>Aprobado por</dt>
@@ -53,22 +61,74 @@
             </dl>
             <form (ngSubmit)="devolver(ticket)">
               <label>
+                <span>Resultado del taller</span>
+                <select
+                  [ngModel]="returnDrafts()[ticket.id]?.resultadoEquipo ?? 'MISMO'"
+                  (ngModelChange)="cambiarResultado(ticket, $event)"
+                  [name]="'resultado-' + ticket.id"
+                >
+                  <option value="MISMO">Vuelve el mismo equipo</option>
+                  <option value="REEMPLAZO">Se entrega un equipo de reemplazo</option>
+                </select>
+              </label>
+              @if (returnDrafts()[ticket.id]?.resultadoEquipo === 'REEMPLAZO') {
+                <label>
+                  <span>Equipo que se entrega a la delegación</span>
+                  <input
+                    required
+                    maxlength="200"
+                    [ngModel]="returnDrafts()[ticket.id]?.equipoDevuelto ?? ''"
+                    (ngModelChange)="actualizarDevolucion(ticket.id, 'equipoDevuelto', $event)"
+                    [name]="'equipo-devuelto-' + ticket.id"
+                  />
+                </label>
+                <label>
+                  <span>Número de serie o patrimonio del reemplazo</span>
+                  <input
+                    required
+                    maxlength="200"
+                    [ngModel]="returnDrafts()[ticket.id]?.identificacionDevuelta ?? ''"
+                    (ngModelChange)="
+                      actualizarDevolucion(ticket.id, 'identificacionDevuelta', $event)
+                    "
+                    [name]="'identificacion-devuelta-' + ticket.id"
+                  />
+                </label>
+                <label>
+                  <span>Motivo del reemplazo</span>
+                  <textarea
+                    required
+                    maxlength="2000"
+                    rows="2"
+                    [ngModel]="returnDrafts()[ticket.id]?.motivoReemplazo ?? ''"
+                    (ngModelChange)="actualizarDevolucion(ticket.id, 'motivoReemplazo', $event)"
+                    [name]="'motivo-reemplazo-' + ticket.id"
+                  ></textarea>
+                </label>
+              } @else {
+                <p class="return-same-equipment">
+                  Se registrará la devolución del mismo equipo:
+                  <strong>{{ transfer.identificacion }}</strong
+                  >.
+                </p>
+              }
+              <label>
                 <span>Trabajo realizado / solución</span>
                 <textarea
                   required
                   maxlength="10000"
                   rows="3"
-                  [ngModel]="solutions()[ticket.id] || ''"
+                  [ngModel]="returnDrafts()[ticket.id]?.solucion ?? ''"
                   (ngModelChange)="actualizarSolucion(ticket.id, $event)"
                   [name]="'solucion-' + ticket.id"
                 ></textarea>
               </label>
-              <button
-                type="submit"
-                class="return-button"
-                [disabled]="busyTicketId() === ticket.id"
-              >
-                {{ busyTicketId() === ticket.id ? 'Registrando…' : 'Registrar devolución y terminar reclamo' }}
+              <button type="submit" class="return-button" [disabled]="busyTicketId() === ticket.id">
+                {{
+                  busyTicketId() === ticket.id
+                    ? 'Registrando…'
+                    : 'Registrar devolución a la delegación y terminar reclamo'
+                }}
               </button>
             </form>
           </article>

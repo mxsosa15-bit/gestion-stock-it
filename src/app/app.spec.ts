@@ -97,6 +97,8 @@ describe('App', () => {
     const fixture = createApp();
     const app = fixture.componentInstance;
     vi.spyOn(app.inventoryService, 'guardarEnServidor').mockResolvedValue();
+    app.inventoryService.pisos.set([{ id: 'piso-central', nombre: 'Planta baja', nivel: 0 }]);
+    app.inventoryService.areas.set([{ id: 'area-1', pisoId: 'piso-central', nombre: 'Sistemas' }]);
     app.inventoryService.puestos.set([
       {
         id: 'puesto-manual',

@@ -1,0 +1,100 @@
+.task-form-panel {
+  margin-bottom: 1.25rem;
+}
+
+.task-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.task-form label {
+  display: grid;
+  gap: 0.4rem;
+  color: #48566f;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.task-form input,
+.task-form select,
+.task-form textarea {
+  width: 100%;
+  border: 1px solid #d8deea;
+  border-radius: 0.55rem;
+  padding: 0.7rem 0.8rem;
+  color: #263650;
+  font: inherit;
+}
+
+.task-form textarea {
+  resize: vertical;
+}
+
+.field-full,
+.task-form-actions {
+  grid-column: 1 / -1;
+}
+
+.task-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.task-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1.25rem 1.25rem;
+}
+
+.task-card {
+  border: 1px solid #e3e8f1;
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+}
+
+.task-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.task-card h4 {
+  margin: 0.45rem 0 0;
+  color: #263650;
+}
+
+.task-card time,
+.task-card footer {
+  color: #64728a;
+  font-size: 0.82rem;
+}
+
+.task-card p {
+  margin: 0.8rem 0;
+  white-space: pre-wrap;
+}
+
+.task-card footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .task-form {
+    grid-template-columns: 1fr;
+  }
+
+  .task-form label,
+  .field-full,
+  .task-form-actions {
+    grid-column: 1;
+  }
+
+  .task-card-heading {
+    display: block;
+  }
+}

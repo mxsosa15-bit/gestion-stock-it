@@ -57,7 +57,8 @@
           <span class="feedback feedback-error" role="alert">{{ puestosError() }}</span>
         } @else if (!puestosLoading() && puestosAfectados().length === 0) {
           <span class="feedback" role="status">
-            No hay puestos cargados para esta área. Contactá a un operador para actualizar el inventario.
+            No hay puestos cargados para esta área. Contactá a un operador para actualizar el
+            inventario.
           </span>
         }
       </label>
@@ -110,7 +111,8 @@
               </header>
               <p class="ticket-description">{{ ticket.descripcion }}</p>
               <p class="ticket-owner">
-                Área: <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
+                Sede: <strong>{{ ticket.sede_nombre ?? 'Sede no identificada' }}</strong> · Área:
+                <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
                 <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
               </p>
               <ol class="status-steps" [attr.aria-label]="'Estado actual: ' + ticket.estado">
@@ -218,15 +220,25 @@
                   } @else if (transfer.estado === 'En taller') {
                     <p class="feedback feedback-success">
                       Aprobado por {{ transfer.aprobado_por_nombre }} ·
-                      {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
-                      El equipo ya figura en taller; el operador registrará la devolución y
-                      finalizará el reclamo.
+                      {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}. El equipo ya figura en
+                      taller; el operador registrará la devolución y finalizará el reclamo.
                     </p>
                   } @else if (transfer.estado === 'Devuelto') {
                     <p class="feedback feedback-success">
                       Devolución registrada por {{ transfer.devuelto_por_nombre }} ·
                       {{ transfer.devuelto_at | date: 'dd/MM/yyyy HH:mm' }}.
                     </p>
+                    @if (transfer.resultado_equipo === 'MISMO') {
+                      <p>Volvió el mismo equipo: {{ transfer.identificacion_devuelta }}.</p>
+                    } @else if (transfer.resultado_equipo === 'REEMPLAZO') {
+                      <p>
+                        Se entregó {{ transfer.equipo_devuelto }} ·
+                        {{ transfer.identificacion_devuelta }}. Motivo:
+                        {{ transfer.motivo_reemplazo }}.
+                      </p>
+                    } @else {
+                      <p>Devolución histórica sin detalle del equipo recibido.</p>
+                    }
                   } @else {
                     <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
                   }
@@ -242,7 +254,7 @@
       <div>
         <span class="eyebrow">SOPORTE IT</span>
         <h2>Recepción de reclamos</h2>
-        <p>Cola general de trabajo con solicitudes de todas las áreas.</p>
+        <p>Cola central con reclamos de Casa Central y todas las delegaciones.</p>
       </div>
       <div class="heading-actions">
         <span class="ticket-count">{{ activeTickets().length }} activos</span>
@@ -314,6 +326,7 @@
             </header>
             <p class="ticket-description">{{ ticket.descripcion }}</p>
             <p class="ticket-owner">
+              Sede: <strong>{{ ticket.sede_nombre ?? 'Sede no identificada' }}</strong> ·
               Solicitante: <strong>{{ ticket.usuario_nombre }}</strong> · Área:
               <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
               <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
@@ -330,14 +343,25 @@
                 } @else if (transfer.estado === 'En taller') {
                   <p class="feedback feedback-success">
                     Aprobado por {{ transfer.aprobado_por_nombre }} ·
-                    {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}.
-                    El equipo está en taller; la devolución se registra desde esa sección.
+                    {{ transfer.aprobado_at | date: 'dd/MM/yyyy HH:mm' }}. El equipo está en taller;
+                    la devolución se registra desde esa sección.
                   </p>
                 } @else if (transfer.estado === 'Devuelto') {
                   <p class="feedback feedback-success">
                     Devolución registrada por {{ transfer.devuelto_por_nombre }} ·
                     {{ transfer.devuelto_at | date: 'dd/MM/yyyy HH:mm' }}.
                   </p>
+                  @if (transfer.resultado_equipo === 'MISMO') {
+                    <p>Volvió el mismo equipo: {{ transfer.identificacion_devuelta }}.</p>
+                  } @else if (transfer.resultado_equipo === 'REEMPLAZO') {
+                    <p>
+                      Se entregó {{ transfer.equipo_devuelto }} ·
+                      {{ transfer.identificacion_devuelta }}. Motivo:
+                      {{ transfer.motivo_reemplazo }}.
+                    </p>
+                  } @else {
+                    <p>Devolución histórica sin detalle del equipo recibido.</p>
+                  }
                 } @else {
                   <p class="feedback feedback-error">Rechazado: {{ transfer.motivo_rechazo }}</p>
                 }
@@ -360,7 +384,8 @@
                 </p>
               } @else if (ticket.taller?.estado === 'Pendiente') {
                 <p class="feedback">
-                  El reclamo no puede terminarse hasta que el solicitante responda sobre la derivación.
+                  El reclamo no puede terminarse hasta que el solicitante responda sobre la
+                  derivación.
                 </p>
               } @else {
                 @if (resolvingTicketId() === ticket.id) {
@@ -482,10 +507,24 @@
                 </header>
                 <p class="ticket-description">{{ ticket.descripcion }}</p>
                 <p class="ticket-owner">
-                  {{ ticket.usuario_nombre }} · Área:
-                  <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
+                  {{ ticket.sede_nombre ?? 'Sede no identificada' }} · {{ ticket.usuario_nombre }} ·
+                  Área: <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
                   <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
                 </p>
+                @if (ticket.taller?.resultado_equipo === 'MISMO') {
+                  <p class="ticket-owner">
+                    Se devolvió el mismo equipo:
+                    <strong>{{ ticket.taller?.identificacion_devuelta }}</strong>
+                  </p>
+                } @else if (ticket.taller?.resultado_equipo === 'REEMPLAZO') {
+                  <p class="ticket-owner">
+                    Reemplazo entregado:
+                    <strong>{{ ticket.taller?.equipo_devuelto }}</strong> ·
+                    <strong>{{ ticket.taller?.identificacion_devuelta }}</strong
+                    >. Motivo:
+                    {{ ticket.taller?.motivo_reemplazo }}
+                  </p>
+                }
                 <p class="resolution"><strong>Solución:</strong> {{ ticket.solucion }}</p>
               </article>
             }

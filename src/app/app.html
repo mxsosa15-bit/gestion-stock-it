@@ -106,6 +106,14 @@
           <span class="nav-icon">⇄</span><span>Transferencias</span>
         </button>
         <button
+          *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+          type="button"
+          (click)="cambiarVista('TAREAS')"
+          [class.active]="vistaActiva() === 'TAREAS'"
+        >
+          <span class="nav-icon">◷</span><span>Bitácora de tareas</span>
+        </button>
+        <button
           *ngIf="authService.user()?.role !== 'solicitante'"
           type="button"
           (click)="cambiarVista('STOCK')"
@@ -180,6 +188,16 @@
           </button>
           <h1>DOSEP DIGITAL</h1>
         </div>
+        <label *ngIf="sedes().length > 1" class="site-selector"
+          >Sede
+          <select
+            [ngModel]="sedeSeleccionadaId()"
+            (ngModelChange)="cambiarSede($event)"
+            aria-label="Sede activa"
+          >
+            <option *ngFor="let sede of sedes()" [value]="sede.id">{{ sede.nombre }}</option>
+          </select>
+        </label>
       </header>
 
       <div class="page-content">
@@ -210,6 +228,18 @@
         } @placeholder {
         } @loading (after 100ms) {
           <p class="feedback" role="status">Preparando el módulo de transferencias…</p>
+        }
+        @defer (when vistaActiva() === 'TAREAS') {
+          <ng-container *ngIf="sedeSeleccionada() as sede">
+            <app-operator-tasks
+              *ngIf="vistaActiva() === 'TAREAS'"
+              [sedeId]="sede.id"
+              [sedeNombre]="sede.nombre"
+            ></app-operator-tasks>
+          </ng-container>
+        } @placeholder {
+        } @loading (after 100ms) {
+          <p class="feedback" role="status">Cargando bitácora de tareas…</p>
         }
         <ng-container *ngIf="authService.user()?.role !== 'solicitante'">
           <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
@@ -597,9 +627,24 @@
                 <h2>Depósito y stock</h2>
                 <p>Controlá existencias y anticipá necesidades de reposición.</p>
               </div>
-              <button type="button" class="primary-button" (click)="abrirModal('NUEVO_STOCK')">
-                ＋ Ingresar stock
-              </button>
+              <div class="heading-actions">
+                @if (sedeSeleccionada()?.tipo === 'CENTRAL') {
+                  <button
+                    type="button"
+                    class="secondary-button"
+                    (click)="abrirModal('SALDO_INICIAL')"
+                  >
+                    Registrar saldo inicial
+                  </button>
+                  <button type="button" class="primary-button" (click)="abrirModal('NUEVO_STOCK')">
+                    ＋ Ingresar stock
+                  </button>
+                } @else {
+                  <p class="feedback">
+                    Los ingresos se registran en Casa Central y se envían a las delegaciones.
+                  </p>
+                }
+              </div>
             </section>
             <section class="stats-grid compact-stats">
               <article class="stat-card">
@@ -615,6 +660,12 @@
                 </div>
               </article>
             </section>
+            @defer (when vistaActiva() === 'STOCK') {
+              <app-stock-dispatch *ngIf="vistaActiva() === 'STOCK'"></app-stock-dispatch>
+            } @placeholder {
+            } @loading (after 100ms) {
+              <p class="feedback" role="status">Preparando el envío de stock…</p>
+            }
             <section class="data-panel">
               <div class="panel-heading">
                 <div>
@@ -661,6 +712,13 @@
                         </span>
                       </td>
                       <td>
+                        <button
+                          type="button"
+                          class="secondary-button"
+                          (click)="abrirAjusteStock(insumo)"
+                        >
+                          Ajustar
+                        </button>
                         <button
                           type="button"
                           class="icon-button danger-icon"
@@ -775,6 +833,7 @@
             @defer (when vistaActiva() === 'EDIFICIO') {
               <app-area-assets-explorer
                 *ngIf="vistaActiva() === 'EDIFICIO'"
+                [sedeId]="sedeSeleccionadaId()"
               ></app-area-assets-explorer>
             } @placeholder {}
           </main>
@@ -908,10 +967,75 @@
                     (change)="importarRespaldoJson($event)"
                   />
                 </ng-container>
+                <label class="report-site-filter">
+                  Incluir en Excel
+                  <select [ngModel]="sedeReporteId()" (ngModelChange)="sedeReporteId.set($event)">
+                    <option value="TODAS">Todas las sedes</option>
+                    <option *ngFor="let sede of sedes()" [value]="sede.id">
+                      {{ sede.nombre }}
+                    </option>
+                  </select>
+                </label>
                 <button type="button" class="primary-button" (click)="exportarInventarioExcel()">
                   ↓ Exportar a Excel
                 </button>
               </div>
+            </section>
+            <section *ngIf="authService.user()?.role === 'admin'" class="data-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>Delegaciones y sedes</h3>
+                  <p>
+                    Cada sede mantiene sus áreas y existencias separadas. Luego de crearla,
+                    seleccionála arriba para cargar su estructura e inventario.
+                  </p>
+                </div>
+              </div>
+              <form class="user-create-form" (ngSubmit)="crearSede()">
+                <label>
+                  Nombre de la delegación
+                  <input
+                    [ngModel]="nuevaSede().nombre"
+                    (ngModelChange)="actualizarNuevaSede('nombre', $event)"
+                    name="sedeNombre"
+                    required
+                    maxlength="120"
+                  />
+                </label>
+                <label>
+                  Departamento
+                  <input
+                    [ngModel]="nuevaSede().departamento"
+                    (ngModelChange)="actualizarNuevaSede('departamento', $event)"
+                    name="sedeDepartamento"
+                    maxlength="120"
+                  />
+                </label>
+                <label>
+                  Localidad
+                  <input
+                    [ngModel]="nuevaSede().localidad"
+                    (ngModelChange)="actualizarNuevaSede('localidad', $event)"
+                    name="sedeLocalidad"
+                    maxlength="120"
+                  />
+                </label>
+                <label>
+                  Dirección
+                  <input
+                    [ngModel]="nuevaSede().direccion"
+                    (ngModelChange)="actualizarNuevaSede('direccion', $event)"
+                    name="sedeDireccion"
+                    maxlength="300"
+                  />
+                </label>
+                <p *ngIf="errorSedes()" class="inline-error field-full" role="alert">
+                  {{ errorSedes() }}
+                </p>
+                <button type="submit" class="primary-button" [disabled]="creandoSede()">
+                  {{ creandoSede() ? 'Creando…' : 'Crear delegación' }}
+                </button>
+              </form>
             </section>
             <section class="stats-grid">
               <article class="stat-card">
@@ -947,8 +1071,8 @@
                 <div>
                   <h3>Usuarios del sistema ({{ authService.usuarios().length }})</h3>
                   <p>
-                    Listado completo de cuentas, perfiles y áreas. Desde cada cuenta podés
-                    restablecer su contraseña.
+                    Cambiá los permisos o el área sin modificar el nombre de usuario. También podés
+                    restablecer contraseñas.
                   </p>
                 </div>
               </div>
@@ -999,7 +1123,7 @@
                   >
                     <option value="" disabled>Seleccioná el área</option>
                     <option *ngFor="let area of authService.areas()" [value]="area.id">
-                      {{ area.nombre }}
+                      {{ area.sedeNombre }} · {{ area.nombre }}
                     </option>
                   </select>
                 </label>
@@ -1021,14 +1145,81 @@
                     <span>{{ usuario.areaNombre || 'Sin área asignada' }}</span>
                     <time>{{ usuario.createdAt | date: 'dd/MM/yyyy' }}</time>
                   </div>
-                  <button
-                    type="button"
-                    class="secondary-button"
-                    *ngIf="usuarioParaRestablecer() !== usuario.id"
-                    (click)="usuarioParaRestablecer.set(usuario.id); nuevaContrasena.set('')"
+                  <div class="admin-user-actions">
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      *ngIf="usuario.id !== authService.user()?.id"
+                      (click)="iniciarEdicionUsuario(usuario)"
+                    >
+                      Editar perfil
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      *ngIf="usuarioParaRestablecer() !== usuario.id"
+                      (click)="
+                        usuarioEnEdicion.set(null);
+                        usuarioParaRestablecer.set(usuario.id);
+                        nuevaContrasena.set('')
+                      "
+                    >
+                      Restablecer contraseña
+                    </button>
+                  </div>
+                  <form
+                    *ngIf="usuarioEnEdicion() === usuario.id"
+                    class="user-edit-form"
+                    (ngSubmit)="guardarEdicionUsuario(usuario.id)"
                   >
-                    Restablecer contraseña
-                  </button>
+                    <label>
+                      Permisos
+                      <select
+                        name="editRole-{{ usuario.id }}"
+                        [ngModel]="usuarioEdicion().role"
+                        (ngModelChange)="actualizarEdicionUsuario('role', $event)"
+                      >
+                        <option value="operator">Operador</option>
+                        <option value="admin">Administrador</option>
+                        <option value="solicitante">Solicitante de soporte</option>
+                        <option value="dashboard">Dashboard (solo lectura)</option>
+                      </select>
+                    </label>
+                    <label *ngIf="usuarioEdicion().role === 'solicitante'">
+                      Área del solicitante
+                      <select
+                        name="editArea-{{ usuario.id }}"
+                        required
+                        [ngModel]="usuarioEdicion().areaId"
+                        (ngModelChange)="actualizarEdicionUsuario('areaId', $event)"
+                      >
+                        <option value="" disabled>Seleccioná el área</option>
+                        <option *ngFor="let area of authService.areas()" [value]="area.id">
+                          {{ area.sedeNombre }} · {{ area.nombre }}
+                        </option>
+                      </select>
+                    </label>
+                    <small
+                      *ngIf="
+                        usuarioEdicion().role === 'solicitante' && authService.areas().length === 0
+                      "
+                    >
+                      No hay áreas activas para asignar.
+                    </small>
+                    <button
+                      type="submit"
+                      class="primary-button"
+                      [disabled]="
+                        usuarioActualizando() === usuario.id ||
+                        (usuarioEdicion().role === 'solicitante' && !usuarioEdicion().areaId)
+                      "
+                    >
+                      {{ usuarioActualizando() === usuario.id ? 'Guardando…' : 'Guardar cambios' }}
+                    </button>
+                    <button type="button" class="text-button" (click)="cancelarEdicionUsuario()">
+                      Cancelar
+                    </button>
+                  </form>
                   <form
                     *ngIf="usuarioParaRestablecer() === usuario.id"
                     class="user-password-reset"
@@ -1069,8 +1260,8 @@
                 <div>
                   <h3>Actividad del inventario</h3>
                   <p>
-                    Mostrando {{ historialVisible().length }} de {{ historial().length }} movimientos
-                    recientes
+                    Mostrando {{ historialVisible().length }} de
+                    {{ historial().length }} movimientos recientes
                   </p>
                 </div>
               </div>
@@ -1111,7 +1302,10 @@
           </main>
           @defer (when vistaActiva() === 'PATRIMONIO') {
             @if (vistaActiva() === 'PATRIMONIO') {
-              <app-asset-labels />
+              <app-asset-labels
+                [sedeId]="sedeSeleccionadaId()"
+                [sedeNombre]="sedeSeleccionada()?.nombre ?? 'Casa Central'"
+              />
             }
           }
         </ng-container>
@@ -1138,11 +1332,15 @@
                   ? 'Relevar componente instalado'
                   : modalActivo() === 'NUEVO_STOCK'
                     ? 'Ingresar stock'
-                    : modalActivo() === 'NUEVO_PISO'
-                      ? 'Crear piso'
-                      : modalActivo() === 'NUEVA_AREA'
-                        ? 'Crear área'
-                        : 'Registrar equipo de red'
+                    : modalActivo() === 'SALDO_INICIAL'
+                      ? 'Registrar saldo inicial'
+                      : modalActivo() === 'AJUSTE_STOCK'
+                        ? 'Ajustar inventario'
+                        : modalActivo() === 'NUEVO_PISO'
+                          ? 'Crear piso'
+                          : modalActivo() === 'NUEVA_AREA'
+                            ? 'Crear área'
+                            : 'Registrar equipo de red'
             }}
           </h2>
         </div>
@@ -1159,7 +1357,11 @@
         {{
           modalActivo() === 'NUEVO_COMPONENTE'
             ? 'Registrá manualmente el equipamiento existente. Esta acción no consulta ni modifica el stock de repuestos.'
-            : 'Completá los datos para mantener el inventario actualizado.'
+            : modalActivo() === 'SALDO_INICIAL'
+              ? 'Ingresá la cantidad que hay físicamente hoy. No se sumará a un saldo existente.'
+              : modalActivo() === 'AJUSTE_STOCK'
+                ? 'Indicá el saldo contado y el motivo. El sistema guardará la diferencia en el historial.'
+                : 'Completá los datos para mantener el inventario actualizado.'
         }}
       </p>
       <p *ngIf="errorFormulario()" class="inline-error" role="alert">{{ errorFormulario() }}</p>
@@ -1241,7 +1443,10 @@
         </p>
       </div>
 
-      <div *ngIf="modalActivo() === 'NUEVO_STOCK'" class="form-fields">
+      <div
+        *ngIf="modalActivo() === 'NUEVO_STOCK' || modalActivo() === 'SALDO_INICIAL'"
+        class="form-fields"
+      >
         <label
           >Tipo de componente<select [(ngModel)]="nuevoStock.tipo">
             <option *ngFor="let tipo of tiposPerifericos" [ngValue]="tipo">{{ tipo }}</option>
@@ -1256,9 +1461,10 @@
             placeholder="Ej. SSD 500GB NVMe"
         /></label>
         <label
-          >Cantidad a ingresar<input
+          >{{ modalActivo() === 'SALDO_INICIAL' ? 'Saldo actual' : 'Cantidad a ingresar'
+          }}<input
             type="number"
-            min="1"
+            [min]="modalActivo() === 'SALDO_INICIAL' ? 0 : 1"
             step="1"
             [(ngModel)]="nuevoStock.cantidadDisponible"
         /></label>
@@ -1269,6 +1475,33 @@
             step="1"
             [(ngModel)]="nuevoStock.stockMinimo"
         /></label>
+      </div>
+
+      <div *ngIf="modalActivo() === 'AJUSTE_STOCK'" class="form-fields">
+        <p class="form-hint field-full" *ngIf="insumoEnAjuste() as insumo">
+          {{ insumo.tipo }} · {{ insumo.marca }} · {{ insumo.especificacion }} — saldo actual:
+          <strong>{{ insumo.cantidadDisponible }}</strong>
+        </p>
+        <label>
+          Cantidad contada
+          <input
+            type="number"
+            min="0"
+            step="1"
+            [ngModel]="cantidadAjuste()"
+            (ngModelChange)="cantidadAjuste.set($event === '' ? 0 : +$event)"
+          />
+        </label>
+        <label class="field-full">
+          Motivo del ajuste
+          <textarea
+            rows="3"
+            maxlength="500"
+            [ngModel]="motivoAjuste()"
+            (ngModelChange)="motivoAjuste.set($event)"
+            placeholder="Ej. Se consumieron 3 unidades antes de comenzar a usar el sistema"
+          ></textarea>
+        </label>
       </div>
 
       <div *ngIf="modalActivo() === 'NUEVO_PISO'" class="form-fields">
@@ -1352,6 +1585,22 @@
           (click)="guardarNuevoStock()"
         >
           Agregar al stock
+        </button>
+        <button
+          *ngIf="modalActivo() === 'SALDO_INICIAL'"
+          type="button"
+          class="primary-button"
+          (click)="guardarSaldoInicial()"
+        >
+          Guardar saldo inicial
+        </button>
+        <button
+          *ngIf="modalActivo() === 'AJUSTE_STOCK'"
+          type="button"
+          class="primary-button"
+          (click)="guardarAjusteStock()"
+        >
+          Ajustar saldo
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_PISO'"

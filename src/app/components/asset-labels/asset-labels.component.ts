@@ -5,6 +5,7 @@ import {
   Component,
   ElementRef,
   inject,
+  input,
   OnInit,
   QueryList,
   signal,
@@ -18,6 +19,7 @@ import {
   HardwareType,
   parseHardwareCsv,
 } from '../../services/hardware-assets.service';
+import { DEFAULT_SEDE_ID } from '../../../shared/locations';
 
 @Component({
   selector: 'app-asset-labels',
@@ -29,6 +31,8 @@ import {
 export class AssetLabelsComponent implements OnInit {
   private readonly hardwareService = inject(HardwareAssetsService);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  readonly sedeId = input(DEFAULT_SEDE_ID);
+  readonly sedeNombre = input('Casa Central');
 
   readonly types: HardwareType[] = ['MONITOR', 'IMPRESORA', 'SCANNER', 'TECLADO', 'MOUSE', 'OTRO'];
   readonly assets = signal<HardwareAsset[]>([]);
@@ -61,18 +65,26 @@ export class AssetLabelsComponent implements OnInit {
 
   get filteredAssets(): HardwareAsset[] {
     const query = this.filter().trim().toLocaleLowerCase();
-    if (!query) return this.assets();
-    return this.assets().filter((asset) =>
-      [asset.tipo, asset.marca, asset.modelo ?? '', asset.numeroSerie, asset.numeroPatrimonio ?? '']
-        .join(' ')
-        .toLocaleLowerCase()
-        .includes(query),
+    return this.assets().filter(
+      (asset) =>
+        (asset.sedeId ?? DEFAULT_SEDE_ID) === this.sedeId() &&
+        (!query ||
+          [
+            asset.tipo,
+            asset.marca,
+            asset.modelo ?? '',
+            asset.numeroSerie,
+            asset.numeroPatrimonio ?? '',
+          ]
+            .join(' ')
+            .toLocaleLowerCase()
+            .includes(query)),
     );
   }
 
   get printableAssets(): HardwareAsset[] {
     const selected = this.selectedIds();
-    return this.assets().filter(
+    return this.filteredAssets.filter(
       (asset) => selected.has(asset.id) && Boolean(asset.numeroPatrimonio),
     );
   }
@@ -131,6 +143,7 @@ export class AssetLabelsComponent implements OnInit {
         especificacion: form.especificacion.trim() || null,
         numeroSerie,
         numeroPatrimonio: form.numeroPatrimonio.trim() || null,
+        sedeId: this.sedeId(),
       });
       this.assets.update((assets) => [created, ...assets]);
       this.newAsset.update((asset) => ({
@@ -156,7 +169,9 @@ export class AssetLabelsComponent implements OnInit {
         this.error.set(parsed.errors.join(' '));
         return;
       }
-      const imported = await this.hardwareService.importar(parsed.assets);
+      const imported = await this.hardwareService.importar(
+        parsed.assets.map((asset) => ({ ...asset, sedeId: this.sedeId() })),
+      );
       this.assets.update((assets) => [...imported, ...assets]);
       this.notice.set(
         `Se importaron ${imported.length} equipos. Ya podés asociar las etiquetas recibidas.`,

@@ -11,6 +11,8 @@ import { createDatabasePool, verifyDatabase } from './server/database';
 import { createHardwareAssetsApi } from './server/hardware-assets-api';
 import { createInventoryApi } from './server/inventory-api';
 import { createInventoryTransfersApi } from './server/inventory-transfers-api';
+import { createLocationsApi } from './server/locations-api';
+import { createOperatorTasksApi } from './server/operator-tasks-api';
 import { createTicketsApi } from './server/tickets-api';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
@@ -20,10 +22,9 @@ app.set('trust proxy', process.env['TRUST_PROXY'] === 'true' ? 1 : false);
 const angularApp = new AngularNodeAppEngine();
 const databasePool = createDatabasePool();
 app.use(express.json({ limit: '5mb' }));
-app.use(
-  '/api',
-  createInventoryApi(databasePool, process.env['SESSION_SECRET'] ?? ''),
-);
+app.use('/api', createInventoryApi(databasePool, process.env['SESSION_SECRET'] ?? ''));
+app.use('/api', createLocationsApi(databasePool));
+app.use('/api', createOperatorTasksApi(databasePool));
 app.use('/api', createInventoryTransfersApi(databasePool));
 app.use('/api', createTicketsApi(databasePool));
 app.use('/api', createHardwareAssetsApi(databasePool));
@@ -45,9 +46,7 @@ app.use(
 app.use((req, res, next) => {
   angularApp
     .handle(req)
-    .then((response) =>
-      response ? writeResponseToNodeResponse(response, res) : next(),
-    )
+    .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
     .catch(next);
 });
 

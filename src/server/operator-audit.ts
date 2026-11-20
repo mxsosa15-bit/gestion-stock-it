@@ -228,6 +228,10 @@ function mutationEvent(request: Request): OperatorAuditEvent {
   if (path === '/admin/users' && method === 'POST') {
     action = 'Creó un usuario';
     entityType = 'usuario';
+  } else if (/^\/admin\/users\/[^/]+$/.test(path) && method === 'PATCH') {
+    action = 'Actualizó el perfil de un usuario';
+    entityType = 'usuario';
+    entityId = path.split('/')[3] ?? null;
   } else if (/^\/admin\/users\/[^/]+\/password$/.test(path) && method === 'PUT') {
     action = 'Restableció una contraseña';
     entityType = 'usuario';
@@ -254,6 +258,9 @@ function mutationEvent(request: Request): OperatorAuditEvent {
   } else if (path === '/transferencias' && method === 'POST') {
     action = 'Registró una transferencia de inventario';
     entityType = 'transferencia';
+  } else if (path === '/inventory/stock-transfers' && method === 'POST') {
+    action = 'Envió stock desde Casa Central a una delegación';
+    entityType = 'transferencia de stock';
   } else if (path === '/hardware-assets' && method === 'POST') {
     action = 'Registró un equipo patrimonial';
     entityType = 'equipo patrimonial';
