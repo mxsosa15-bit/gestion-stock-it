@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { Request, Response } from 'express';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { SessionUser } from './session-user';
 
 export interface OperatorAuditEvent {
@@ -22,12 +22,15 @@ interface InventoryChange {
   action: string;
   type: string;
   name: string;
+  id: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
 }
 
 const inventoryCollections = [
   { key: 'pisos', label: 'piso', nameKeys: ['nombre'] },
   { key: 'areas', label: 'área', nameKeys: ['nombre'] },
-  { key: 'personas', label: 'persona asignada', nameKeys: ['nombre'] },
+  { key: 'personas', label: 'persona asignada', nameKeys: [] },
   { key: 'puestos', label: 'puesto', nameKeys: ['nombrePuesto'] },
   { key: 'stock', label: 'insumo de stock', nameKeys: ['tipo', 'marca'] },
   { key: 'equiposRed', label: 'equipo de red', nameKeys: ['tipo', 'marca'] },
@@ -70,13 +73,58 @@ export function inventoryHistoryAuditEvents(history: unknown): OperatorAuditHist
         actorUsername,
         action: 'Registró un movimiento de inventario',
         entityType: 'inventario',
-        entityId: null,
-        entityName: typeof name === 'string' ? name : null,
+        entityId: id,
+        entityName: typeof name === 'string' ? sanitizeAuditString(name) : null,
         details: { tipo: typeof type === 'string' ? type : '' },
         createdAt: timestamp.toISOString(),
       },
     ];
   });
+}
+
+export async function excludeAuditedStockMovementHistory(
+  pool: Pool,
+  events: OperatorAuditHistoryEvent[],
+): Promise<OperatorAuditHistoryEvent[]> {
+  const movementIds = events
+    .map((event) => event.entityId)
+    .filter((id): id is string => id !== null);
+  if (movementIds.length === 0) return events;
+
+  const result = await pool.query<{ entity_id: string }>(
+    `SELECT entity_id
+     FROM gestion_it.operator_audit_events
+     WHERE entity_type = 'transferencia de stock'
+       AND entity_id = ANY($1::text[])
+     UNION
+     SELECT entry->>'registroId' AS entity_id
+     FROM gestion_it.operator_audit_events AS event
+     CROSS JOIN LATERAL jsonb_array_elements(
+       CASE
+         WHEN jsonb_typeof(event.details->'registros') = 'array'
+           THEN event.details->'registros'
+         ELSE '[]'::jsonb
+       END
+     ) AS entries(entry)
+     WHERE event.entity_type = 'inventario'
+       AND entry->>'tipo' = 'movimiento de inventario'
+       AND entry->>'registroId' = ANY($1::text[])
+     UNION
+     SELECT movement_id AS entity_id
+     FROM gestion_it.operator_audit_events AS event
+     CROSS JOIN LATERAL jsonb_array_elements_text(
+       CASE
+         WHEN jsonb_typeof(event.details->'historialMovimientoIds') = 'array'
+           THEN event.details->'historialMovimientoIds'
+         ELSE '[]'::jsonb
+       END
+     ) AS entries(movement_id)
+     WHERE event.entity_type = 'inventario'
+       AND movement_id = ANY($1::text[])`,
+    [movementIds],
+  );
+  const recordedIds = new Set(result.rows.map((row) => row.entity_id));
+  return events.filter((event) => event.entityId === null || !recordedIds.has(event.entityId));
 }
 
 function recordsById(value: unknown): Map<string, Record<string, unknown>> {
@@ -102,6 +150,59 @@ function withoutComponents(record: Record<string, unknown>): Record<string, unkn
   return values;
 }
 
+function inventoryAuditSnapshot(
+  type: string,
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields: Record<string, readonly string[]> = {
+    piso: ['nombre', 'nivel', 'sedeId'],
+    área: ['nombre', 'pisoId'],
+    'persona asignada': ['areaId', 'puestoId'],
+    puesto: ['nombrePuesto', 'usuarioAsignado', 'areaId', 'codigoSeguimiento'],
+    'insumo de stock': [
+      'tipo',
+      'marca',
+      'especificacion',
+      'cantidadDisponible',
+      'stockMinimo',
+      'codigoSeguimiento',
+      'sedeId',
+    ],
+    'equipo de red': ['tipo', 'marca', 'modelo', 'areaId', 'codigoSeguimiento'],
+    'componente retirado': ['estado', 'fechaRetiro', 'puestoId'],
+    'componente de puesto': [
+      'tipo',
+      'marca',
+      'modelo',
+      'especificacion',
+      'numeroSerie',
+      'codigoSeguimiento',
+    ],
+    'movimiento de inventario': [
+      'tipo',
+      'fecha',
+      'cantidad',
+      'detalle',
+      'sedeId',
+      'insumoId',
+      'puestoId',
+      'equipoRedId',
+      'componenteRetiradoId',
+      'operadorId',
+      'operador',
+    ],
+  };
+  const snapshot: Record<string, unknown> = {};
+  for (const key of fields[type] ?? []) {
+    const value = record[key];
+    if (typeof value === 'string') snapshot[key] = value.slice(0, 250);
+    else if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      snapshot[key] = value;
+    }
+  }
+  return snapshot;
+}
+
 function collectInventoryChanges(before: unknown, after: unknown): InventoryChange[] {
   if (!isRecord(before) || !isRecord(after)) return [];
   const changes: InventoryChange[] = [];
@@ -116,6 +217,9 @@ function collectInventoryChanges(before: unknown, after: unknown): InventoryChan
           action: 'Creó',
           type: collection.label,
           name: recordName(record, collection.nameKeys),
+          id,
+          before: null,
+          after: inventoryAuditSnapshot(collection.label, record),
         });
       } else {
         const oldValue = collection.key === 'puestos' ? withoutComponents(oldRecord) : oldRecord;
@@ -125,6 +229,9 @@ function collectInventoryChanges(before: unknown, after: unknown): InventoryChan
             action: 'Actualizó',
             type: collection.label,
             name: recordName(record, collection.nameKeys),
+            id,
+            before: inventoryAuditSnapshot(collection.label, oldRecord),
+            after: inventoryAuditSnapshot(collection.label, record),
           });
         }
       }
@@ -135,8 +242,48 @@ function collectInventoryChanges(before: unknown, after: unknown): InventoryChan
           action: 'Eliminó',
           type: collection.label,
           name: recordName(record, collection.nameKeys),
+          id,
+          before: inventoryAuditSnapshot(collection.label, record),
+          after: null,
         });
       }
+    }
+  }
+
+  const previousHistory = recordsById(before['historial']);
+  const currentHistory = recordsById(after['historial']);
+  for (const [id, record] of currentHistory) {
+    const oldRecord = previousHistory.get(id);
+    if (!oldRecord) {
+      changes.push({
+        action: 'Registró',
+        type: 'movimiento de inventario',
+        name: recordName(record, ['detalle', 'tipo']),
+        id,
+        before: null,
+        after: inventoryAuditSnapshot('movimiento de inventario', record),
+      });
+    } else if (!isDeepStrictEqual(oldRecord, record)) {
+      changes.push({
+        action: 'Modificó',
+        type: 'movimiento de inventario',
+        name: recordName(record, ['detalle', 'tipo']),
+        id,
+        before: inventoryAuditSnapshot('movimiento de inventario', oldRecord),
+        after: inventoryAuditSnapshot('movimiento de inventario', record),
+      });
+    }
+  }
+  for (const [id, record] of previousHistory) {
+    if (!currentHistory.has(id)) {
+      changes.push({
+        action: 'Eliminó',
+        type: 'movimiento de inventario',
+        name: recordName(record, ['detalle', 'tipo']),
+        id,
+        before: inventoryAuditSnapshot('movimiento de inventario', record),
+        after: null,
+      });
     }
   }
 
@@ -160,9 +307,23 @@ function collectInventoryChanges(before: unknown, after: unknown): InventoryChan
     const oldComponent = previousComponents.get(id);
     const name = recordName(component, ['tipo', 'marca']);
     if (!oldComponent) {
-      changes.push({ action: 'Agregó', type: 'componente de puesto', name });
+      changes.push({
+        action: 'Agregó',
+        type: 'componente de puesto',
+        name,
+        id,
+        before: null,
+        after: inventoryAuditSnapshot('componente de puesto', component),
+      });
     } else if (!isDeepStrictEqual(oldComponent, component)) {
-      changes.push({ action: 'Actualizó', type: 'componente de puesto', name });
+      changes.push({
+        action: 'Actualizó',
+        type: 'componente de puesto',
+        name,
+        id,
+        before: inventoryAuditSnapshot('componente de puesto', oldComponent),
+        after: inventoryAuditSnapshot('componente de puesto', component),
+      });
     }
   }
   for (const [id, component] of previousComponents) {
@@ -171,6 +332,9 @@ function collectInventoryChanges(before: unknown, after: unknown): InventoryChan
         action: 'Retiró',
         type: 'componente de puesto',
         name: recordName(component, ['tipo', 'marca']),
+        id,
+        before: inventoryAuditSnapshot('componente de puesto', component),
+        after: null,
       });
     }
   }
@@ -206,19 +370,35 @@ export function describeInventoryChange(before: unknown, after: unknown): Operat
       entityId: null,
       entityName: [...grouped.values()]
         .map((group) => {
-          const plural = group.count === 1 ? '' : 's';
+          const type =
+            group.type === 'movimiento de inventario' && group.count > 1
+              ? 'movimientos de inventario'
+              : `${group.type}${group.count === 1 ? '' : 's'}`;
           const examples = group.names.join(', ');
           const more = group.count > group.names.length ? ', …' : '';
-          return `${group.action} ${group.count} ${group.type}${plural} (${examples}${more})`;
+          return `${group.action} ${group.count} ${type} (${examples}${more})`;
         })
         .join('; ')
         .slice(0, 500),
-      details: { cambios: [...grouped.values()] },
+      details: {
+        cambios: [...grouped.values()],
+        registros: changes.slice(0, 100).map((change) => ({
+          accion: change.action,
+          tipo: change.type,
+          registroId: change.id,
+          anterior: change.before,
+          posterior: change.after,
+        })),
+        historialMovimientoIds: changes
+          .filter((change) => change.type === 'movimiento de inventario')
+          .map((change) => change.id),
+        registrosOmitidos: Math.max(0, changes.length - 100),
+      },
     },
   ];
 }
 
-function mutationEvent(request: Request): OperatorAuditEvent {
+function mutationEvent(request: Request): OperatorAuditEvent | null {
   const path = request.path;
   const method = request.method;
   let action = `Realizó una acción (${method})`;
@@ -239,6 +419,17 @@ function mutationEvent(request: Request): OperatorAuditEvent {
   } else if (path === '/tickets' && method === 'POST') {
     action = 'Creó un reclamo';
     entityType = 'reclamo';
+  } else if (/^\/tickets\/[^/]+\/details$/.test(path) && method === 'PATCH') {
+    action = 'Editó los datos de un reclamo abierto';
+    entityType = 'reclamo';
+    entityId = path.split('/')[2] ?? null;
+  } else if (path === '/operator-tasks' && method === 'POST') {
+    action = 'Registró una tarea de operador';
+    entityType = 'tarea de operador';
+  } else if (/^\/operator-tasks\/[^/]+$/.test(path) && method === 'PUT') {
+    action = 'Actualizó una tarea de operador';
+    entityType = 'tarea de operador';
+    entityId = path.split('/')[2] ?? null;
   } else if (/^\/tickets\/[^/]+\/workshop$/.test(path) && method === 'POST') {
     action = 'Derivó un reclamo al taller';
     entityType = 'reclamo';
@@ -258,15 +449,32 @@ function mutationEvent(request: Request): OperatorAuditEvent {
   } else if (path === '/transferencias' && method === 'POST') {
     action = 'Registró una transferencia de inventario';
     entityType = 'transferencia';
+  } else if (path === '/sedes' && method === 'POST') {
+    action = 'Registró una sede';
+    entityType = 'sede';
+  } else if (/^\/sedes\/[^/]+$/.test(path) && method === 'PATCH') {
+    action = 'Actualizó los datos descriptivos de una sede';
+    entityType = 'sede';
+    entityId = path.split('/')[2] ?? null;
   } else if (path === '/inventory/stock-transfers' && method === 'POST') {
     action = 'Envió stock desde Casa Central a una delegación';
     entityType = 'transferencia de stock';
+  } else if (path === '/inventory' && method === 'PUT') {
+    action = 'Actualizó el inventario';
+    entityType = 'inventario';
+  } else if (path === '/inventory/import' && method === 'POST') {
+    action = 'Importó un inventario';
+    entityType = 'inventario';
   } else if (path === '/hardware-assets' && method === 'POST') {
     action = 'Registró un equipo patrimonial';
     entityType = 'equipo patrimonial';
   } else if (path === '/hardware-assets/import' && method === 'POST') {
     action = 'Importó equipos patrimoniales';
     entityType = 'equipo patrimonial';
+  } else if (/^\/hardware-assets\/[^/]+\/details$/.test(path) && method === 'PATCH') {
+    action = 'Actualizó los datos descriptivos de un equipo patrimonial';
+    entityType = 'equipo patrimonial';
+    entityId = path.split('/')[2] ?? null;
   } else if (/^\/hardware-assets\/[^/]+\/patrimony$/.test(path) && method === 'PUT') {
     action = 'Actualizó un número patrimonial';
     entityType = 'equipo patrimonial';
@@ -276,19 +484,50 @@ function mutationEvent(request: Request): OperatorAuditEvent {
     entityType = 'componente';
     entityId = path.split('/').at(-1) ?? null;
   } else {
-    entityType = path.split('/').filter(Boolean)[0] ?? 'sistema';
+    return null;
   }
 
   return { action, entityType, entityId, entityName: null, details: {} };
 }
 
-async function saveAuditEvents(
-  pool: Pool,
+interface StockShipmentAuditContext {
+  idempotencyKey: string;
+  movementId: string;
+  alreadyProcessed: boolean;
+}
+
+function isStockShipmentAuditContext(value: unknown): value is StockShipmentAuditContext {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value['idempotencyKey'] === 'string' &&
+    typeof value['movementId'] === 'string' &&
+    typeof value['alreadyProcessed'] === 'boolean'
+  );
+}
+
+function addResponseAuditContext(
+  event: OperatorAuditEvent,
+  value: unknown,
+): OperatorAuditEvent {
+  if (!isRecord(value)) return event;
+  const details = isRecord(value['details']) ? value['details'] : {};
+  return {
+    ...event,
+    entityId: typeof value['entityId'] === 'string' ? value['entityId'] : event.entityId,
+    entityName: typeof value['entityName'] === 'string' ? value['entityName'] : event.entityName,
+    details: { ...event.details, ...details },
+  };
+}
+
+type AuditQueryClient = Pick<Pool, 'query'>;
+
+async function writeAuditEvents(
+  database: AuditQueryClient,
   actor: SessionUser,
   events: OperatorAuditEvent[],
 ): Promise<void> {
   if (events.length === 0) return;
-  await pool.query(
+  await database.query(
     `INSERT INTO gestion_it.operator_audit_events
        (actor_id, actor_username, action, entity_type, entity_id, entity_name, details)
      SELECT $1, $2, event.action, event.entity_type, event.entity_id,
@@ -296,8 +535,91 @@ async function saveAuditEvents(
      FROM jsonb_to_recordset($3::jsonb) AS event(
        action text, entity_type text, entity_id text, entity_name text, details jsonb
      )`,
-    [actor.id, actor.username, JSON.stringify(events)],
+    [actor.id, actor.username, serializeAuditEvents(events)],
   );
+}
+
+async function saveAuditEvents(
+  pool: Pool,
+  actor: SessionUser,
+  events: OperatorAuditEvent[],
+): Promise<void> {
+  await writeAuditEvents(pool, actor, events);
+}
+
+export async function recordOperatorAuditEvents(
+  client: PoolClient,
+  actor: SessionUser,
+  events: OperatorAuditEvent[],
+): Promise<void> {
+  await writeAuditEvents(client, actor, events);
+}
+
+function sanitizeAuditEvents(events: OperatorAuditEvent[]): OperatorAuditEvent[] {
+  return events.map((event) => ({
+    ...event,
+    action: sanitizeAuditString(event.action),
+    entityType: sanitizeAuditString(event.entityType),
+    entityId: event.entityId === null ? null : sanitizeAuditString(event.entityId),
+    entityName: event.entityName === null ? null : sanitizeAuditString(event.entityName),
+    details: sanitizeAuditRecord(event.details),
+  }));
+}
+
+function serializeAuditEvents(events: OperatorAuditEvent[]): string {
+  return JSON.stringify(
+    sanitizeAuditEvents(events).map((event) => ({
+      action: event.action,
+      entity_type: event.entityType,
+      entity_id: event.entityId,
+      entity_name: event.entityName,
+      details: event.details,
+    })),
+  );
+}
+
+function sanitizeAuditRecord(value: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    sanitized[key] = isSensitiveAuditKey(key) ? '[REDACTED]' : sanitizeAuditValue(entry);
+  }
+  return sanitized;
+}
+
+function sanitizeAuditValue(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeAuditString(value);
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
+  if (isRecord(value)) return sanitizeAuditRecord(value);
+  return value;
+}
+
+function isSensitiveAuditKey(key: string): boolean {
+  return /(password|passphrase|token|secret|authorization|cookie|credential|api[_-]?key|private[_-]?key|access[_-]?key)/i.test(
+    key,
+  );
+}
+
+function sanitizeAuditString(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?\b/g, '[REDACTED]')
+    .replace(
+      /\b(access[_-]?token|refresh[_-]?token)\b(\s*[:=]\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1$2[REDACTED]',
+    )
+    .replace(
+      /\b(password|passphrase|passwd|secret)\b(\s*[:=]\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1$2[REDACTED]',
+    )
+    .replace(
+      /\b(token|authorization|cookie|credential)\b(\s*[:=]\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1$2[REDACTED]',
+    )
+    .replace(
+      /\b(api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|secret[_-]?key)\b(\s*[:=]\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1$2[REDACTED]',
+    );
 }
 
 export function installOperatorAuditMiddleware(
@@ -307,7 +629,6 @@ export function installOperatorAuditMiddleware(
     const actor = request.session.user;
     if (
       !actor ||
-      (actor.role !== 'admin' && actor.role !== 'operator') ||
       ['GET', 'HEAD', 'OPTIONS'].includes(request.method) ||
       request.path.startsWith('/auth/')
     ) {
@@ -315,37 +636,66 @@ export function installOperatorAuditMiddleware(
       return;
     }
 
-    const isInventoryWrite =
-      (request.path === '/inventory' && request.method === 'PUT') ||
-      (request.path === '/inventory/import' && request.method === 'POST');
-
-    if (!isInventoryWrite) {
-      const event = mutationEvent(request);
-      response.once('finish', () => {
-        if (response.statusCode < 200 || response.statusCode >= 300) return;
-        void saveAuditEvents(pool, actor, [event]).catch((error: unknown) => {
-          console.error('No se pudo guardar el registro de auditoría de operadores.', error);
-        });
+    const event = mutationEvent(request);
+    if (!event) {
+      console.error('No existe una definición de auditoría para la mutación solicitada.', {
+        method: request.method,
+        path: request.path,
       });
       next();
       return;
     }
-
-    void pool
-      .query<{ payload: unknown }>(
-        'SELECT payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true',
-      )
-      .then((result) => {
-        const beforeSnapshot = result.rows[0]?.payload;
-        response.once('finish', () => {
-          if (response.statusCode < 200 || response.statusCode >= 300) return;
-          const events = describeInventoryChange(beforeSnapshot, request.body?.payload);
-          void saveAuditEvents(pool, actor, events).catch((error: unknown) => {
-            console.error('No se pudo guardar el registro de auditoría de operadores.', error);
-          });
+    const isStockShipment =
+      request.path === '/inventory/stock-transfers' && request.method === 'POST';
+    response.once('finish', () => {
+      const succeeded = response.statusCode >= 200 && response.statusCode < 300;
+      if (response.locals['operatorAuditRecordedTransactionally'] === true) return;
+      if (succeeded && isStockShipment) {
+        const context = response.locals['stockShipmentAudit'];
+        if (!isStockShipmentAuditContext(context)) {
+          console.error('Faltan datos de auditoría para el envío de stock.');
+          return;
+        }
+        if (!context.alreadyProcessed) return;
+        const replayEvent: OperatorAuditEvent = {
+          ...event,
+          action: 'Reintentó un envío de stock ya procesado',
+          entityType: 'reintento de envío de stock',
+          entityId: context.movementId,
+          entityName: 'Reintento idempotente',
+          details: {
+            idempotencyKey: context.idempotencyKey,
+            movementId: context.movementId,
+            resultado: 'ya_procesado',
+            codigoHttp: response.statusCode,
+          },
+        };
+        void saveAuditEvents(pool, actor, [replayEvent]).catch((error: unknown) => {
+          console.error('No se pudo guardar el registro de auditoría de operadores.', error);
         });
-        next();
-      })
-      .catch(next);
+        return;
+      }
+
+      const contextualEvent = addResponseAuditContext(
+        event,
+        response.locals['operatorAuditContext'],
+      );
+      const resultEvent: OperatorAuditEvent = {
+        ...contextualEvent,
+        details: {
+          ...contextualEvent.details,
+          resultado: succeeded
+            ? 'exitoso'
+            : response.statusCode >= 500 || response.statusCode === 408
+              ? 'resultado_incierto'
+              : 'fallido',
+          codigoHttp: response.statusCode,
+        },
+      };
+      void saveAuditEvents(pool, actor, [resultEvent]).catch((error: unknown) => {
+        console.error('No se pudo guardar el registro de auditoría de operadores.', error);
+      });
+    });
+    next();
   };
 }

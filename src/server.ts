@@ -13,6 +13,7 @@ import { createInventoryApi } from './server/inventory-api';
 import { createInventoryTransfersApi } from './server/inventory-transfers-api';
 import { createLocationsApi } from './server/locations-api';
 import { createOperatorTasksApi } from './server/operator-tasks-api';
+import { createReportsApi } from './server/reports-api';
 import { createTicketsApi } from './server/tickets-api';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
@@ -28,6 +29,7 @@ app.use('/api', createOperatorTasksApi(databasePool));
 app.use('/api', createInventoryTransfersApi(databasePool));
 app.use('/api', createTicketsApi(databasePool));
 app.use('/api', createHardwareAssetsApi(databasePool));
+app.use('/api', createReportsApi(databasePool));
 
 /**
  * Serve static files from /browser

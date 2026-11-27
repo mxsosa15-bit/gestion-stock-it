@@ -19,6 +19,13 @@ export interface HardwareAsset extends HardwareAssetInput {
   fechaRegistro: string;
 }
 
+export interface HardwareAssetEdit {
+  tipo: HardwareType;
+  marca: string;
+  modelo: string | null;
+  especificacion: string | null;
+}
+
 export interface HardwareCsvResult {
   assets: HardwareAssetInput[];
   errors: string[];
@@ -167,6 +174,19 @@ export class HardwareAssetsService {
       );
     } catch (error: unknown) {
       throw new Error(this.obtenerMensaje(error, 'No se pudo asociar la etiqueta.'));
+    }
+  }
+
+  async editar(id: string, changes: HardwareAssetEdit): Promise<HardwareAsset> {
+    try {
+      return await firstValueFrom(
+        this.http.patch<HardwareAsset>(
+          `/api/hardware-assets/${encodeURIComponent(id)}/details`,
+          changes,
+        ),
+      );
+    } catch (error: unknown) {
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron actualizar los datos del equipo.'));
     }
   }
 

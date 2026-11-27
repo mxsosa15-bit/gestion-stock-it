@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import express, { type Request, type Response } from 'express';
 import session from 'express-session';
@@ -6,7 +6,14 @@ import connectPgSimple from 'connect-pg-simple';
 import type { Pool, PoolClient } from 'pg';
 import { hashPassword, verifyPassword } from './password';
 import { requireRoles, type SessionUser, type SystemRole } from './session-user';
-import { installOperatorAuditMiddleware, inventoryHistoryAuditEvents } from './operator-audit';
+import {
+  describeInventoryChange,
+  excludeAuditedStockMovementHistory,
+  installOperatorAuditMiddleware,
+  inventoryHistoryAuditEvents,
+  recordOperatorAuditEvents,
+} from './operator-audit';
+import { parseOptionalDate, parseOptionalText, parsePageOptions } from './list-query';
 import { DEFAULT_SEDE_ID } from '../shared/locations';
 
 export interface InventorySnapshot {
@@ -35,10 +42,18 @@ export interface ComponentEdit {
 }
 
 export interface StockShipmentRequest {
+  expectedActorId: string;
+  idempotencyKey: string;
   insumoId: string;
   destinoSedeId: string;
   cantidad: number;
   motivo: string;
+}
+
+export interface StockShipmentResult extends StoredSnapshot {
+  idempotencyKey: string;
+  movementId: string;
+  alreadyProcessed: boolean;
 }
 
 export interface ManagedUserUpdate {
@@ -76,11 +91,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseStockShipmentRequest(value: unknown): StockShipmentRequest | null {
   if (!isRecord(value)) return null;
+  const expectedActorId = value['expectedActorId'];
+  const idempotencyKey = value['idempotencyKey'];
   const insumoId = value['insumoId'];
   const destinoSedeId = value['destinoSedeId'];
   const cantidad = value['cantidad'];
   const motivo = typeof value['motivo'] === 'string' ? value['motivo'].trim() : '';
   if (
+    typeof expectedActorId !== 'string' ||
+    !uuidPattern.test(expectedActorId) ||
+    typeof idempotencyKey !== 'string' ||
+    !uuidPattern.test(idempotencyKey) ||
     typeof insumoId !== 'string' ||
     !insumoId.trim() ||
     insumoId.length > 200 ||
@@ -94,7 +115,14 @@ export function parseStockShipmentRequest(value: unknown): StockShipmentRequest 
   ) {
     return null;
   }
-  return { insumoId: insumoId.trim(), destinoSedeId, cantidad: cantidad as number, motivo };
+  return {
+    expectedActorId,
+    idempotencyKey,
+    insumoId: insumoId.trim(),
+    destinoSedeId,
+    cantidad: cantidad as number,
+    motivo,
+  };
 }
 
 function isInventorySnapshot(value: unknown): value is InventorySnapshot {
@@ -406,6 +434,7 @@ export function applyStockShipment(
   shipment: StockShipmentRequest,
   destinationName: string,
   actor: SessionUser,
+  movementId = `hist-${randomUUID()}`,
 ): InventorySnapshot {
   if (
     !uuidPattern.test(shipment.destinoSedeId) ||
@@ -493,7 +522,7 @@ export function applyStockShipment(
     stock: updatedStock,
     historial: [
       {
-        id: `hist-${randomUUID()}`,
+        id: movementId,
         fecha: new Date().toISOString(),
         tipo: 'TRANSFERENCIA_STOCK',
         cantidad: shipment.cantidad,
@@ -507,6 +536,190 @@ export function applyStockShipment(
     ],
   });
   return attributeHistoryOperators(snapshot, proposed, actor);
+}
+
+export class StockShipmentIdempotencyConflictError extends Error {
+  constructor() {
+    super('La clave de idempotencia ya se utilizó con datos diferentes.');
+    this.name = 'StockShipmentIdempotencyConflictError';
+  }
+}
+
+export class StockShipmentActorMismatchError extends Error {
+  constructor() {
+    super('La sesión autenticada cambió desde que se confirmó el envío.');
+    this.name = 'StockShipmentActorMismatchError';
+  }
+}
+
+function stockShipmentFingerprint(shipment: StockShipmentRequest): string {
+  const canonicalRequest = [
+    shipment.insumoId,
+    shipment.destinoSedeId.toLowerCase(),
+    shipment.cantidad,
+    shipment.motivo,
+  ];
+  return createHash('sha256').update(JSON.stringify(canonicalRequest)).digest('hex');
+}
+
+export async function executeStockShipment(
+  pool: Pool,
+  shipment: StockShipmentRequest,
+  actor: SessionUser,
+): Promise<StockShipmentResult> {
+  if (shipment.expectedActorId !== actor.id) throw new StockShipmentActorMismatchError();
+  const client = await pool.connect();
+  let transactionStarted = false;
+  const fingerprint = stockShipmentFingerprint(shipment);
+  const movementId = `hist-${randomUUID()}`;
+
+  try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+    const claim = await client.query<{ idempotency_key: string }>(
+      `INSERT INTO gestion_it.inventory_stock_shipments
+         (idempotency_key, actor_id, request_fingerprint, insumo_id, destino_sede_id,
+          cantidad, motivo, movement_id)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6, $7, $8)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING idempotency_key::text`,
+      [
+        shipment.idempotencyKey,
+        actor.id,
+        fingerprint,
+        shipment.insumoId,
+        shipment.destinoSedeId,
+        shipment.cantidad,
+        shipment.motivo,
+        movementId,
+      ],
+    );
+
+    if (!claim.rows[0]) {
+      const existing = await client.query<{
+        actor_id: string;
+        request_fingerprint: string;
+        movement_id: string;
+        processed_revision: string | null;
+      }>(
+        `SELECT actor_id::text, request_fingerprint, movement_id, processed_revision::text
+         FROM gestion_it.inventory_stock_shipments
+         WHERE idempotency_key = $1::uuid`,
+        [shipment.idempotencyKey],
+      );
+      const previous = existing.rows[0];
+      if (!previous) throw new Error('No se pudo recuperar el resultado del envío previo.');
+      if (previous.actor_id !== actor.id || previous.request_fingerprint !== fingerprint) {
+        throw new StockShipmentIdempotencyConflictError();
+      }
+      if (!previous.processed_revision) {
+        throw new Error('El registro de idempotencia del envío está incompleto.');
+      }
+
+      const current = await client.query<StoredSnapshot>(
+        'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true',
+      );
+      const row = current.rows[0];
+      if (!row) throw new Error('No existe el estado inicial del inventario.');
+      await recordOperatorAuditEvents(client, actor, [
+        {
+          action: 'Reintentó un envío de stock ya procesado',
+          entityType: 'reintento de envío de stock',
+          entityId: previous.movement_id,
+          entityName: 'Reintento idempotente',
+          details: {
+            idempotencyKey: shipment.idempotencyKey,
+            movementId: previous.movement_id,
+            resultado: 'ya_procesado',
+          },
+        },
+      ]);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return {
+        ...row,
+        idempotencyKey: shipment.idempotencyKey,
+        movementId: previous.movement_id,
+        alreadyProcessed: true,
+      };
+    }
+
+    const current = await client.query<StoredSnapshot>(
+      'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true FOR UPDATE',
+    );
+    const row = current.rows[0];
+    if (!row) throw new Error('No existe el estado inicial del inventario.');
+
+    const destination = await client.query<{ nombre: string }>(
+      `SELECT nombre
+       FROM gestion_it.sedes
+       WHERE id = $1::uuid AND tipo = 'DELEGACION' AND activa = true
+       FOR SHARE`,
+      [shipment.destinoSedeId],
+    );
+    const destinationName = destination.rows[0]?.nombre;
+    if (!destinationName) {
+      throw new StockShipmentValidationError(
+        'Seleccioná una delegación activa como destino del envío.',
+      );
+    }
+
+    const payload = applyStockShipment(row.payload, shipment, destinationName, actor, movementId);
+    if (!(await hasKnownInventorySedes(client, payload))) {
+      throw new StockShipmentValidationError('El inventario contiene una sede inválida.');
+    }
+    if (!hasUniqueTrackingCodes(payload)) {
+      throw new StockShipmentValidationError(
+        'El envío produciría códigos de seguimiento duplicados.',
+      );
+    }
+
+    const saved = await client.query<StoredSnapshot>(
+      `UPDATE gestion_it.inventory_snapshot
+       SET payload = $1::jsonb, revision = revision + 1, updated_at = now()
+       WHERE singleton_id = true
+       RETURNING revision::text, payload`,
+      [JSON.stringify(payload)],
+    );
+    const result = saved.rows[0];
+    if (!result) throw new Error('No se pudo recuperar el inventario actualizado.');
+    await client.query(
+      `UPDATE gestion_it.inventory_stock_shipments
+       SET processed_revision = $2::bigint
+       WHERE idempotency_key = $1::uuid`,
+      [shipment.idempotencyKey, result.revision],
+    );
+    await recordOperatorAuditEvents(client, actor, [
+      {
+        action: 'Envió stock desde Casa Central a una delegación',
+        entityType: 'transferencia de stock',
+        entityId: movementId,
+        entityName: `${shipment.cantidad} unidades a ${destinationName}`,
+        details: {
+          idempotencyKey: shipment.idempotencyKey,
+          movementId,
+          insumoId: shipment.insumoId,
+          destinoSedeId: shipment.destinoSedeId,
+          cantidad: shipment.cantidad,
+          motivo: shipment.motivo,
+          resultado: 'procesado',
+        },
+      },
+    ]);
+    await client.query('COMMIT');
+    transactionStarted = false;
+    return {
+      ...result,
+      idempotencyKey: shipment.idempotencyKey,
+      movementId,
+      alreadyProcessed: false,
+    };
+  } catch (error: unknown) {
+    if (transactionStarted) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function attributeHistoryOperators(
@@ -840,7 +1053,10 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
     async (request, response, next) => {
       const shipment = parseStockShipmentRequest(request.body);
       if (!shipment) {
-        response.status(400).json({ error: 'Los datos del envío de stock son inválidos.' });
+        response.status(400).json({
+          code: 'INVALID_SHIPMENT_REQUEST',
+          error: 'Los datos del envío de stock son inválidos.',
+        });
         return;
       }
       const actor = request.session.user;
@@ -849,69 +1065,38 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         return;
       }
 
-      const client = await pool.connect();
-      let transactionStarted = false;
       try {
-        await client.query('BEGIN');
-        transactionStarted = true;
-        const current = await client.query<StoredSnapshot>(
-          'SELECT revision::text, payload FROM gestion_it.inventory_snapshot WHERE singleton_id = true FOR UPDATE',
-        );
-        const row = current.rows[0];
-        if (!row) throw new Error('No existe el estado inicial del inventario.');
-
-        const destination = await client.query<{ nombre: string }>(
-          `SELECT nombre
-         FROM gestion_it.sedes
-         WHERE id = $1::uuid AND tipo = 'DELEGACION' AND activa = true
-         FOR SHARE`,
-          [shipment.destinoSedeId],
-        );
-        const destinationName = destination.rows[0]?.nombre;
-        if (!destinationName) {
-          await client.query('ROLLBACK');
-          transactionStarted = false;
-          response.status(400).json({
-            error: 'Seleccioná una delegación activa como destino del envío.',
-          });
-          return;
-        }
-
-        const payload = applyStockShipment(row.payload, shipment, destinationName, actor);
-        if (!(await hasKnownInventorySedes(client, payload))) {
-          await client.query('ROLLBACK');
-          transactionStarted = false;
-          response.status(400).json({ error: 'El inventario contiene una sede inválida.' });
-          return;
-        }
-        if (!hasUniqueTrackingCodes(payload)) {
-          await client.query('ROLLBACK');
-          transactionStarted = false;
-          response.status(400).json({
-            error: 'El envío produciría códigos de seguimiento duplicados.',
-          });
-          return;
-        }
-
-        const saved = await client.query<StoredSnapshot>(
-          `UPDATE gestion_it.inventory_snapshot
-         SET payload = $1::jsonb, revision = revision + 1, updated_at = now()
-         WHERE singleton_id = true
-         RETURNING revision::text, payload`,
-          [JSON.stringify(payload)],
-        );
-        await client.query('COMMIT');
-        transactionStarted = false;
-        response.json(saved.rows[0]);
+        const result = await executeStockShipment(pool, shipment, actor);
+        response.locals['stockShipmentAudit'] = {
+          idempotencyKey: result.idempotencyKey,
+          movementId: result.movementId,
+          alreadyProcessed: result.alreadyProcessed,
+        };
+        response.locals['operatorAuditRecordedTransactionally'] = true;
+        response.json(result);
       } catch (error) {
-        if (transactionStarted) await client.query('ROLLBACK');
+        if (error instanceof StockShipmentActorMismatchError) {
+          response.status(409).json({
+            code: 'OPERATOR_SESSION_CHANGED',
+            error: error.message,
+          });
+          return;
+        }
+        if (error instanceof StockShipmentIdempotencyConflictError) {
+          response.status(409).json({
+            code: 'IDEMPOTENCY_KEY_REUSED',
+            error: error.message,
+          });
+          return;
+        }
         if (error instanceof StockShipmentValidationError) {
-          response.status(400).json({ error: error.message });
+          response.status(400).json({
+            code: 'SHIPMENT_REJECTED',
+            error: error.message,
+          });
           return;
         }
         next(error);
-      } finally {
-        client.release();
       }
     },
   );
@@ -994,7 +1179,27 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         [JSON.stringify(normalized)],
       );
       await syncInventoryAreas(client, normalized);
+      const auditEvents = describeInventoryChange(currentRow.payload, normalized);
+      await recordOperatorAuditEvents(
+        client,
+        actor,
+        auditEvents.length > 0
+          ? auditEvents.map((event) => ({
+              ...event,
+              details: { ...event.details, resultado: 'exitoso' },
+            }))
+          : [
+              {
+                action: 'Guardó el inventario sin cambios',
+                entityType: 'inventario',
+                entityId: null,
+                entityName: null,
+                details: { resultado: 'exitoso', cambios: [] },
+              },
+            ],
+      );
       await client.query('COMMIT');
+      response.locals['operatorAuditRecordedTransactionally'] = true;
       response.json(saved.rows[0]);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1043,6 +1248,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
 
         const puestoId = request.params['puestoId'];
         const componenteId = request.params['componenteId'];
+        if (typeof puestoId !== 'string' || typeof componenteId !== 'string') {
+          await client.query('ROLLBACK');
+          response.status(404).json({ error: 'No se encontró el componente en ese puesto.' });
+          return;
+        }
         const puesto = currentRow.payload.puestos.find((item) => item['id'] === puestoId);
         const componente =
           puesto && Array.isArray(puesto['componentes'])
@@ -1120,7 +1330,23 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
             JSON.stringify(afterData),
           ],
         );
+        await recordOperatorAuditEvents(client, actor, [
+          {
+            action: 'Corrigió administrativamente un componente',
+            entityType: 'componente',
+            entityId: componenteId,
+            entityName: `${String(updatedComponent['tipo'] ?? '')} ${String(updatedComponent['marca'] ?? '')}`.trim(),
+            details: {
+              resultado: 'exitoso',
+              puestoId,
+              motivo,
+              anterior: beforeData,
+              posterior: afterData,
+            },
+          },
+        ]);
         await client.query('COMMIT');
+        response.locals['operatorAuditRecordedTransactionally'] = true;
         response.json(saved.rows[0]);
       } catch (error) {
         await client.query('ROLLBACK');
@@ -1136,6 +1362,11 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
       response
         .status(403)
         .json({ error: 'Solo una persona administradora puede importar un respaldo.' });
+      return;
+    }
+    const actor = request.session.user;
+    if (!actor) {
+      response.status(401).json({ error: 'Iniciá sesión para continuar.' });
       return;
     }
     const { payload } = request.body ?? {};
@@ -1183,7 +1414,27 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
         [JSON.stringify(normalized)],
       );
       await syncInventoryAreas(client, normalized);
+      const auditEvents = describeInventoryChange(row.payload, normalized);
+      await recordOperatorAuditEvents(
+        client,
+        actor,
+        auditEvents.length > 0
+          ? auditEvents.map((event) => ({
+              ...event,
+              details: { ...event.details, resultado: 'exitoso', tipo: 'importacion' },
+            }))
+          : [
+              {
+                action: 'Importó un inventario sin elementos',
+                entityType: 'inventario',
+                entityId: null,
+                entityName: null,
+                details: { resultado: 'exitoso', tipo: 'importacion', cambios: [] },
+              },
+            ],
+      );
       await client.query('COMMIT');
+      response.locals['operatorAuditRecordedTransactionally'] = true;
       response.json(saved.rows[0]);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1226,93 +1477,207 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
   });
 
   router.get('/admin/operator-audit', requireAdministrator, async (request, response, next) => {
-    const from = typeof request.query['from'] === 'string' ? request.query['from'] : null;
-    const to = typeof request.query['to'] === 'string' ? request.query['to'] : null;
-    const actorId = typeof request.query['actorId'] === 'string' ? request.query['actorId'] : null;
-    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-    const isValidDate = (value: string | null): boolean =>
-      value === null ||
-      (datePattern.test(value) &&
-        !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) &&
-        new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value);
+    const from = parseOptionalDate(request.query['from']);
+    const to = parseOptionalDate(request.query['to']);
+    const rawActorId = request.query['actorId'];
+    const actorId = typeof rawActorId === 'string' ? rawActorId : null;
+    const module = parseOptionalText(request.query['module'], 100);
+    const action = parseOptionalText(request.query['action'], 120);
+    const search = parseOptionalText(request.query['search'], 200);
+    const sort = parseOptionalText(request.query['sort'], 16);
+    const pagination = parsePageOptions(
+      request.query['page'],
+      request.query['pageSize'],
+      500,
+      500,
+    );
     if (
-      !isValidDate(from) ||
-      !isValidDate(to) ||
+      from === undefined ||
+      to === undefined ||
+      module === undefined ||
+      action === undefined ||
+      search === undefined ||
+      sort === undefined ||
+      pagination === null ||
       (from !== null && to !== null && from > to) ||
-      (actorId !== null && !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId))
+      (rawActorId !== undefined && typeof rawActorId !== 'string') ||
+      (actorId !== null && !/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(actorId)) ||
+      (sort !== null && sort !== 'newest' && sort !== 'oldest')
     ) {
       response.status(400).json({ error: 'Los filtros de auditoría no son válidos.' });
       return;
     }
 
+    const values: unknown[] = [];
+    const filters: string[] = [];
+    const bind = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (from) filters.push(`event.created_at >= ${bind(from)}::date`);
+    if (to) filters.push(`event.created_at < ${bind(to)}::date + interval '1 day'`);
+    let actorParam: string | null = null;
+    if (actorId) {
+      actorParam = bind(actorId);
+      filters.push(`event.actor_id = ${actorParam}::uuid`);
+    }
+    if (module) filters.push(`event.entity_type ILIKE '%' || ${bind(module)} || '%'`);
+    if (action) filters.push(`event.action ILIKE '%' || ${bind(action)} || '%'`);
+    if (search) {
+      const term = bind(search);
+      filters.push(
+        `(event.actor_username ILIKE '%' || ${term} || '%'
+          OR event.action ILIKE '%' || ${term} || '%'
+          OR event.entity_type ILIKE '%' || ${term} || '%'
+          OR COALESCE(event.entity_id, '') ILIKE '%' || ${term} || '%'
+          OR COALESCE(event.entity_name, '') ILIKE '%' || ${term} || '%'
+          OR event.details::text ILIKE '%' || ${term} || '%')`,
+      );
+    }
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const joinFilters = filters.length > 0
+      ? `AND ${filters.join(' AND ').replaceAll('event.', 'e.')}`
+      : '';
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+
     try {
-      const [operators, summary, events, inventory] = await Promise.all([
+      const [operators, summary, count, inventory, firstAuditEvent] = await Promise.all([
         pool.query<{ id: string; username: string; role: string }>(
           `SELECT id, username, role
            FROM gestion_it.app_users
-           WHERE role IN ('admin', 'operator')
+           WHERE role IN ('admin', 'operator', 'solicitante', 'dashboard')
            ORDER BY username`,
         ),
         pool.query<{
           actorId: string;
           username: string;
           role: string;
-          taskCount: number;
+          eventCount: number;
         }>(
           `SELECT u.id AS "actorId", u.username, u.role,
-                  count(e.id)::int AS "taskCount"
+                  count(e.id)::int AS "eventCount"
            FROM gestion_it.app_users AS u
            LEFT JOIN gestion_it.operator_audit_events AS e
-             ON e.actor_id = u.id
-            AND ($1::date IS NULL OR e.created_at >= $1::date)
-            AND ($2::date IS NULL OR e.created_at < $2::date + interval '1 day')
-            AND ($3::uuid IS NULL OR e.actor_id = $3::uuid)
-           WHERE u.role IN ('admin', 'operator')
-             AND ($3::uuid IS NULL OR u.id = $3::uuid)
+             ON e.actor_id = u.id ${joinFilters}
+           WHERE u.role IN ('admin', 'operator', 'solicitante', 'dashboard')
+             ${actorParam ? `AND u.id = ${actorParam}::uuid` : ''}
            GROUP BY u.id, u.username, u.role
            ORDER BY count(e.id) DESC, u.username`,
-          [from, to, actorId],
+          values,
         ),
-        pool.query(
-          `SELECT id, actor_id AS "actorId", actor_username AS "actorUsername",
-                  action, entity_type AS "entityType", entity_id AS "entityId",
-                  entity_name AS "entityName", details, created_at AS "createdAt"
-           FROM gestion_it.operator_audit_events
-           WHERE ($1::date IS NULL OR created_at >= $1::date)
-             AND ($2::date IS NULL OR created_at < $2::date + interval '1 day')
-             AND ($3::uuid IS NULL OR actor_id = $3::uuid)
-           ORDER BY created_at DESC, id DESC
-           LIMIT 500`,
-          [from, to, actorId],
+        pool.query<{ total: number }>(
+          `SELECT count(*)::int AS total
+           FROM gestion_it.operator_audit_events AS event
+           ${where}`,
+          values,
         ),
         pool.query<{ history: unknown }>(
           `SELECT payload->'historial' AS history
            FROM gestion_it.inventory_snapshot
            WHERE singleton_id = true`,
         ),
+        pool.query<{ first_created_at: Date | null }>(
+          'SELECT min(created_at) AS first_created_at FROM gestion_it.operator_audit_events',
+        ),
       ]);
-      const historyEvents = inventoryHistoryAuditEvents(inventory.rows[0]?.history).filter(
+      const auditStartedAt = firstAuditEvent.rows[0]?.first_created_at?.toISOString() ?? null;
+      const filteredHistoryEvents = inventoryHistoryAuditEvents(inventory.rows[0]?.history).filter(
         (event) =>
+          (!auditStartedAt || event.createdAt < auditStartedAt) &&
           (!from || event.createdAt.slice(0, 10) >= from) &&
           (!to || event.createdAt.slice(0, 10) <= to) &&
-          (!actorId || event.actorId === actorId),
+          (!actorId || event.actorId === actorId) &&
+          (!module || event.entityType.toLocaleLowerCase().includes(module.toLocaleLowerCase())) &&
+          (!action || event.action.toLocaleLowerCase().includes(action.toLocaleLowerCase())) &&
+          (!search ||
+            [
+              event.actorUsername,
+              event.action,
+              event.entityType,
+              event.entityId ?? '',
+              event.entityName ?? '',
+              JSON.stringify(event.details),
+            ]
+              .join(' ')
+              .toLocaleLowerCase()
+              .includes(search.toLocaleLowerCase())),
       );
-      const useHistoryFallback = events.rows.length === 0 && historyEvents.length > 0;
+      const historyEvents = await excludeAuditedStockMovementHistory(
+        pool,
+        filteredHistoryEvents,
+      );
       const fallbackCounts = new Map<string, number>();
-      if (useHistoryFallback) {
-        for (const event of historyEvents) {
-          fallbackCounts.set(event.actorId, (fallbackCounts.get(event.actorId) ?? 0) + 1);
-        }
+      for (const event of historyEvents) {
+        fallbackCounts.set(event.actorId, (fallbackCounts.get(event.actorId) ?? 0) + 1);
       }
+      historyEvents.sort((left, right) => {
+        const comparison = left.createdAt.localeCompare(right.createdAt);
+        if (comparison !== 0) return order === 'ASC' ? comparison : -comparison;
+        return order === 'ASC'
+          ? left.id.localeCompare(right.id)
+          : right.id.localeCompare(left.id);
+      });
+
+      const databaseTotal = count.rows[0]?.total ?? 0;
+      const historyTotal = historyEvents.length;
+      const total = databaseTotal + historyTotal;
+      const offset = pagination.offset;
+      let databaseOffset = 0;
+      let databaseLimit = 0;
+      let historyOffset = 0;
+      let historyLimit = 0;
+      if (order === 'DESC') {
+        if (offset < databaseTotal) {
+          databaseOffset = offset;
+          databaseLimit = Math.min(pagination.pageSize, databaseTotal - offset);
+          historyLimit = pagination.pageSize - databaseLimit;
+        } else {
+          historyOffset = offset - databaseTotal;
+          historyLimit = pagination.pageSize;
+        }
+      } else if (offset < historyTotal) {
+        historyOffset = offset;
+        historyLimit = Math.min(pagination.pageSize, historyTotal - offset);
+        databaseLimit = pagination.pageSize - historyLimit;
+      } else {
+        databaseOffset = offset - historyTotal;
+        databaseLimit = pagination.pageSize;
+      }
+
+      const databaseEvents =
+        databaseLimit > 0 && databaseOffset < databaseTotal
+          ? await pool.query(
+              `SELECT id, actor_id AS "actorId", actor_username AS "actorUsername",
+                      action, entity_type AS "entityType", entity_id AS "entityId",
+                      entity_name AS "entityName", details, created_at AS "createdAt"
+               FROM gestion_it.operator_audit_events AS event
+               ${where}
+               ORDER BY event.created_at ${order}, event.id ${order}
+               LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+              [...values, databaseLimit, databaseOffset],
+            )
+          : { rows: [] };
+      const legacyEvents = historyEvents.slice(historyOffset, historyOffset + historyLimit);
+      const summaryWithHistory = summary.rows.map((operator) => ({
+        ...operator,
+        eventCount: operator.eventCount + (fallbackCounts.get(operator.actorId) ?? 0),
+      }));
+      const pageEvents = [...databaseEvents.rows, ...legacyEvents].sort((left, right) => {
+        const leftTime = new Date(left.createdAt).getTime();
+        const rightTime = new Date(right.createdAt).getTime();
+        const comparison = leftTime - rightTime;
+        if (comparison !== 0) return order === 'ASC' ? comparison : -comparison;
+        return order === 'ASC'
+          ? String(left.id).localeCompare(String(right.id))
+          : String(right.id).localeCompare(String(left.id));
+      });
       response.json({
         operators: operators.rows,
-        summary: useHistoryFallback
-          ? summary.rows.map((operator) => ({
-              ...operator,
-              taskCount: fallbackCounts.get(operator.actorId) ?? 0,
-            }))
-          : summary.rows,
-        events: useHistoryFallback ? historyEvents.slice(0, 500) : events.rows,
+        summary: summaryWithHistory,
+        events: pageEvents,
+        total,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
       });
     } catch (error) {
       next(error);
@@ -1346,7 +1711,15 @@ export function createInventoryApi(pool: Pool, sessionSecret: string): express.R
          RETURNING id, username, role, area_id AS "areaId", created_at AS "createdAt"`,
         [randomUUID(), username, passwordHash, role, areaId],
       );
-      response.status(201).json(result.rows[0]);
+      const created = result.rows[0];
+      if (created) {
+        response.locals['operatorAuditContext'] = {
+          entityId: created.id,
+          entityName: created.username,
+          details: { role: created.role, areaId: created.areaId },
+        };
+      }
+      response.status(201).json(created);
     } catch (error) {
       if (typeof error === 'object' && error && 'code' in error && error.code === '23503') {
         response.status(400).json({ error: 'El área seleccionada no existe.' });

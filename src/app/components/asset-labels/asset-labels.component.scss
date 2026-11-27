@@ -151,6 +151,36 @@
   width: 100%;
 }
 
+.asset-edit-form {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e5ec;
+}
+
+.asset-edit-form label {
+  display: grid;
+  gap: 5px;
+  color: #536078;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.asset-edit-form input,
+.asset-edit-form select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #d7dce5;
+  border-radius: 4px;
+  color: #292d3d;
+  background: #fff;
+  font: inherit;
+}
+
 .select-label {
   display: flex;
   align-items: center;

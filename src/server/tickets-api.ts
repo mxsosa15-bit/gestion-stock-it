@@ -1,5 +1,7 @@
 import express, { type Request, type Response } from 'express';
 import type { Pool } from 'pg';
+import { parseOptionalDate, parseOptionalText, parsePageOptions } from './list-query';
+import { recordOperatorAuditEvents } from './operator-audit';
 import { requireRoles } from './session-user';
 import { TICKET_CATEGORIES, type TicketCategory } from '../shared/tickets';
 
@@ -19,6 +21,12 @@ interface AffectedWorkstationRecord {
 interface TicketUpdate {
   estado: 'En proceso' | 'Terminado';
   solucion: string | null;
+}
+
+interface TicketDetailsInput {
+  titulo: string;
+  descripcion: string;
+  categoria: TicketCategory;
 }
 
 interface WorkshopTransferInput {
@@ -85,6 +93,7 @@ interface DashboardTicketRecord {
   fecha_creacion: Date;
   fecha_resolucion: Date | null;
   area_nombre: string | null;
+  inventory_area_id: string | null;
   sede_id: string | null;
   sede_nombre: string | null;
   nombre_afectado: string | null;
@@ -224,6 +233,28 @@ export function parseTicketUpdate(value: unknown): TicketUpdate | null {
   return { estado, solucion };
 }
 
+export function parseTicketDetails(value: unknown): TicketDetailsInput | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  if (!Object.keys(body).every((key) => ['titulo', 'descripcion', 'categoria'].includes(key))) {
+    return null;
+  }
+  const titulo = typeof body['titulo'] === 'string' ? body['titulo'].trim() : '';
+  const descripcion = typeof body['descripcion'] === 'string' ? body['descripcion'].trim() : '';
+  const categoria = body['categoria'];
+  if (
+    !titulo ||
+    titulo.length > 200 ||
+    !descripcion ||
+    descripcion.length > 10_000 ||
+    typeof categoria !== 'string' ||
+    !isTicketCategory(categoria)
+  ) {
+    return null;
+  }
+  return { titulo, descripcion, categoria };
+}
+
 const ticketOrder = `ORDER BY t.fecha_creacion DESC, t.id DESC`;
 const ticketSelect = `SELECT t.id, t.titulo, t.descripcion, t.categoria, t.estado, t.solucion,
                              t.fecha_creacion, t.fecha_resolucion, t.usuario_id,
@@ -338,7 +369,8 @@ export function createTicketsApi(pool: Pool): express.Router {
         const result = await pool.query<DashboardTicketRecord>(
           `SELECT t.id, t.titulo, t.categoria, t.estado,
                 t.fecha_creacion, t.fecha_resolucion,
-                a.nombre AS area_nombre, t.sede_id::text AS sede_id,
+                a.nombre AS area_nombre, a.inventory_area_id::text AS inventory_area_id,
+                t.sede_id::text AS sede_id,
                 sede.nombre AS sede_nombre, t.nombre_afectado,
                 workshop.transferencia AS taller
          FROM gestion_it.tickets AS t
@@ -365,10 +397,97 @@ export function createTicketsApi(pool: Pool): express.Router {
     },
   );
 
-  router.get('/tickets', requireOperator, async (_request, response, next) => {
+  router.get('/tickets', requireOperator, async (request, response, next) => {
+    const search = parseOptionalText(request.query['search'], 200);
+    const site = parseOptionalText(request.query['site'], 120);
+    const area = parseOptionalText(request.query['area'], 120);
+    const responsible = parseOptionalText(request.query['responsible'], 64);
+    const from = parseOptionalDate(request.query['from']);
+    const to = parseOptionalDate(request.query['to']);
+    const state = parseOptionalText(request.query['state'], 24);
+    const category = parseOptionalText(request.query['category'], 64);
+    const sort = parseOptionalText(request.query['sort'], 16);
+    const pagination = parsePageOptions(request.query['page'], request.query['pageSize'], 20);
+    if (
+      search === undefined ||
+      site === undefined ||
+      area === undefined ||
+      responsible === undefined ||
+      from === undefined ||
+      to === undefined ||
+      state === undefined ||
+      category === undefined ||
+      sort === undefined ||
+      pagination === null ||
+      (from !== null && to !== null && from > to) ||
+      (state !== null && !['Abierto', 'En proceso', 'Terminado'].includes(state)) ||
+      (category !== null && !TICKET_CATEGORIES.includes(category as TicketCategory)) ||
+      (sort !== null && sort !== 'newest' && sort !== 'oldest')
+    ) {
+      response.status(400).json({ error: 'Los filtros de reclamos no son válidos.' });
+      return;
+    }
+
+    const values: unknown[] = [];
+    const filters: string[] = [];
+    const bind = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (from) filters.push(`t.fecha_creacion >= ${bind(from)}::date`);
+    if (to) filters.push(`t.fecha_creacion < ${bind(to)}::date + interval '1 day'`);
+    if (state) filters.push(`t.estado = ${bind(state)}`);
+    if (category) filters.push(`t.categoria = ${bind(category)}`);
+    if (site) filters.push(`sede.nombre ILIKE '%' || ${bind(site)} || '%'`);
+    if (area) filters.push(`a.nombre ILIKE '%' || ${bind(area)} || '%'`);
+    if (responsible) filters.push(`u.username ILIKE '%' || ${bind(responsible)} || '%'`);
+    if (search) {
+      const term = bind(search);
+      filters.push(
+        `(t.titulo ILIKE '%' || ${term} || '%'
+          OR t.descripcion ILIKE '%' || ${term} || '%'
+          OR t.categoria ILIKE '%' || ${term} || '%'
+          OR t.estado ILIKE '%' || ${term} || '%'
+          OR u.username ILIKE '%' || ${term} || '%'
+          OR a.nombre ILIKE '%' || ${term} || '%'
+          OR sede.nombre ILIKE '%' || ${term} || '%'
+          OR t.nombre_afectado ILIKE '%' || ${term} || '%')`,
+      );
+    }
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+    const hasPagedQuery = Object.keys(request.query).length > 0;
+    const filterFrom = `FROM gestion_it.tickets AS t
+         JOIN gestion_it.app_users AS u ON u.id = t.usuario_id
+         LEFT JOIN gestion_it.areas AS a ON a.id = t.area_id
+         LEFT JOIN gestion_it.sedes AS sede ON sede.id = t.sede_id`;
+
     try {
-      const result = await pool.query<TicketRecord>(`${ticketSelect} ${ticketOrder}`);
-      response.json(result.rows);
+      if (!hasPagedQuery) {
+        const result = await pool.query<TicketRecord>(`${ticketSelect} ${ticketOrder}`);
+        response.json(result.rows);
+        return;
+      }
+
+      const [count, result] = await Promise.all([
+        pool.query<{ total: number }>(
+          `SELECT count(*)::int AS total ${filterFrom} ${where}`,
+          values,
+        ),
+        pool.query<TicketRecord>(
+          `${ticketSelect}
+           ${where}
+           ORDER BY t.fecha_creacion ${order}, t.id ${order}
+           LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+          [...values, pagination.pageSize, pagination.offset],
+        ),
+      ]);
+      response.json({
+        items: result.rows,
+        total: count.rows[0]?.total ?? 0,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
     } catch (error) {
       next(error);
     }
@@ -376,18 +495,96 @@ export function createTicketsApi(pool: Pool): express.Router {
 
   router.get('/tickets/areas/:areaId', requireOperator, async (request, response, next) => {
     const areaId = request.params['areaId'];
+    const search = parseOptionalText(request.query['search'], 200);
+    const responsible = parseOptionalText(request.query['responsible'], 64);
+    const from = parseOptionalDate(request.query['from']);
+    const to = parseOptionalDate(request.query['to']);
+    const state = parseOptionalText(request.query['state'], 24);
+    const category = parseOptionalText(request.query['category'], 64);
+    const sort = parseOptionalText(request.query['sort'], 16);
+    const pagination = parsePageOptions(request.query['page'], request.query['pageSize'], 20);
     if (typeof areaId !== 'string' || !areaId.trim()) {
       response.status(400).json({ error: 'Seleccioná un área válida.' });
       return;
     }
-    try {
-      const result = await pool.query<{ id: string }>(
-        `${ticketSelect}
-         WHERE a.inventory_area_id = $1
-         ${ticketOrder}`,
-        [areaId],
+    if (
+      search === undefined ||
+      responsible === undefined ||
+      from === undefined ||
+      to === undefined ||
+      state === undefined ||
+      category === undefined ||
+      sort === undefined ||
+      pagination === null ||
+      (from !== null && to !== null && from > to) ||
+      (state !== null && !['Abierto', 'En proceso', 'Terminado'].includes(state)) ||
+      (category !== null && !TICKET_CATEGORIES.includes(category as TicketCategory)) ||
+      (sort !== null && sort !== 'newest' && sort !== 'oldest')
+    ) {
+      response.status(400).json({ error: 'Los filtros de reclamos del área no son válidos.' });
+      return;
+    }
+
+    const values: unknown[] = [areaId];
+    const filters = ['a.inventory_area_id = $1'];
+    const bind = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (from) filters.push(`t.fecha_creacion >= ${bind(from)}::date`);
+    if (to) filters.push(`t.fecha_creacion < ${bind(to)}::date + interval '1 day'`);
+    if (state) filters.push(`t.estado = ${bind(state)}`);
+    if (category) filters.push(`t.categoria = ${bind(category)}`);
+    if (responsible) filters.push(`u.username ILIKE '%' || ${bind(responsible)} || '%'`);
+    if (search) {
+      const term = bind(search);
+      filters.push(
+        `(t.titulo ILIKE '%' || ${term} || '%'
+          OR t.descripcion ILIKE '%' || ${term} || '%'
+          OR t.categoria ILIKE '%' || ${term} || '%'
+          OR t.estado ILIKE '%' || ${term} || '%'
+          OR u.username ILIKE '%' || ${term} || '%'
+          OR t.nombre_afectado ILIKE '%' || ${term} || '%')`,
       );
-      response.json(result.rows);
+    }
+    const where = filters.join(' AND ');
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+    const hasPagedQuery = Object.keys(request.query).length > 0;
+    try {
+      if (!hasPagedQuery) {
+        const result = await pool.query<TicketRecord>(
+          `${ticketSelect}
+           WHERE ${where}
+           ORDER BY t.fecha_creacion DESC, t.id DESC`,
+          values,
+        );
+        response.json(result.rows);
+        return;
+      }
+
+      const [count, result] = await Promise.all([
+        pool.query<{ total: number }>(
+          `SELECT count(*)::int AS total
+           FROM gestion_it.tickets AS t
+           JOIN gestion_it.app_users AS u ON u.id = t.usuario_id
+           LEFT JOIN gestion_it.areas AS a ON a.id = t.area_id
+           WHERE ${where}`,
+          values,
+        ),
+        pool.query<TicketRecord>(
+        `${ticketSelect}
+         WHERE ${where}
+         ORDER BY t.fecha_creacion ${order}, t.id ${order}
+         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+          [...values, pagination.pageSize, pagination.offset],
+        ),
+      ]);
+      response.json({
+        items: result.rows,
+        total: count.rows[0]?.total ?? 0,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
     } catch (error) {
       next(error);
     }
@@ -452,15 +649,91 @@ export function createTicketsApi(pool: Pool): express.Router {
   router.get('/tickets/mine', requireRequester, async (request, response, next) => {
     const areaId = request.session.user?.areaId;
     if (!areaId) {
-      response.json([]);
+      response.json(request.query['page'] === undefined ? [] : {
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+      });
       return;
     }
-    try {
-      const result = await pool.query<TicketRecord>(
-        `${ticketSelect} WHERE t.area_id = $1 ${ticketOrder}`,
-        [areaId],
+    const search = parseOptionalText(request.query['search'], 200);
+    const from = parseOptionalDate(request.query['from']);
+    const to = parseOptionalDate(request.query['to']);
+    const state = parseOptionalText(request.query['state'], 24);
+    const category = parseOptionalText(request.query['category'], 64);
+    const sort = parseOptionalText(request.query['sort'], 16);
+    const pagination = parsePageOptions(request.query['page'], request.query['pageSize'], 20);
+    if (
+      search === undefined ||
+      from === undefined ||
+      to === undefined ||
+      state === undefined ||
+      category === undefined ||
+      sort === undefined ||
+      pagination === null ||
+      (from !== null && to !== null && from > to) ||
+      (state !== null && !['Abierto', 'En proceso', 'Terminado'].includes(state)) ||
+      (category !== null && !TICKET_CATEGORIES.includes(category as TicketCategory)) ||
+      (sort !== null && sort !== 'newest' && sort !== 'oldest')
+    ) {
+      response.status(400).json({ error: 'Los filtros de reclamos no son válidos.' });
+      return;
+    }
+
+    const values: unknown[] = [areaId];
+    const filters = ['t.area_id = $1'];
+    const bind = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (from) filters.push(`t.fecha_creacion >= ${bind(from)}::date`);
+    if (to) filters.push(`t.fecha_creacion < ${bind(to)}::date + interval '1 day'`);
+    if (state) filters.push(`t.estado = ${bind(state)}`);
+    if (category) filters.push(`t.categoria = ${bind(category)}`);
+    if (search) {
+      const term = bind(search);
+      filters.push(
+        `(t.titulo ILIKE '%' || ${term} || '%'
+          OR t.descripcion ILIKE '%' || ${term} || '%'
+          OR t.categoria ILIKE '%' || ${term} || '%'
+          OR t.estado ILIKE '%' || ${term} || '%'
+          OR t.nombre_afectado ILIKE '%' || ${term} || '%')`,
       );
-      response.json(result.rows);
+    }
+    const where = `WHERE ${filters.join(' AND ')}`;
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+    const hasPagedQuery = Object.keys(request.query).length > 0;
+    try {
+      if (!hasPagedQuery) {
+        const result = await pool.query<TicketRecord>(
+          `${ticketSelect} WHERE t.area_id = $1 ${ticketOrder}`,
+          [areaId],
+        );
+        response.json(result.rows);
+        return;
+      }
+      const [count, result] = await Promise.all([
+        pool.query<{ total: number }>(
+          `SELECT count(*)::int AS total
+           FROM gestion_it.tickets AS t
+           WHERE ${filters.join(' AND ')}`,
+          values,
+        ),
+        pool.query<TicketRecord>(
+          `${ticketSelect}
+           ${where}
+           ORDER BY t.fecha_creacion ${order}, t.id ${order}
+           LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+          [...values, pagination.pageSize, pagination.offset],
+        ),
+      ]);
+      response.json({
+        items: result.rows,
+        total: count.rows[0]?.total ?? 0,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      });
     } catch (error) {
       next(error);
     }
@@ -521,10 +794,124 @@ export function createTicketsApi(pool: Pool): express.Router {
         response.status(500).json({ error: 'No se pudo recuperar el reclamo creado.' });
         return;
       }
+      response.locals['operatorAuditContext'] = {
+        entityId: created.id,
+        entityName: ticket.titulo,
+        details: {
+          categoria: ticket.categoria,
+          puestoAfectadoId: ticket.puestoAfectadoId,
+        },
+      };
       response.status(201).json(completeTicket);
       publishTicketEvent(completeTicket.id, 'created', completeTicket.usuario_area_id);
     } catch (error) {
       next(error);
+    }
+  });
+
+  router.patch('/tickets/:id/details', requireRequester, async (request, response, next) => {
+    const details = parseTicketDetails(request.body);
+    if (!details) {
+      response.status(400).json({ error: 'Ingresá asunto, categoría y detalle válidos.' });
+      return;
+    }
+
+    const actor = request.session.user;
+    if (!actor) {
+      response.status(401).json({ error: 'Iniciá sesión para continuar.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const current = await client.query<{
+        id: string;
+        titulo: string;
+        descripcion: string;
+        categoria: TicketCategory;
+        estado: 'Abierto' | 'En proceso' | 'Terminado';
+        area_id: string | null;
+      }>(
+        `SELECT id, titulo, descripcion, categoria, estado, area_id::text AS area_id
+         FROM gestion_it.tickets
+         WHERE id = $1 AND usuario_id = $2
+         FOR UPDATE`,
+        [request.params['id'], actor.id],
+      );
+      const previous = current.rows[0];
+      if (!previous) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        response.status(404).json({ error: 'No se encontró el reclamo.' });
+        return;
+      }
+      if (previous.estado !== 'Abierto' || !actor.areaId || previous.area_id !== actor.areaId) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        response.status(409).json({
+          error: 'Solo podés editar un reclamo abierto de tu área.',
+        });
+        return;
+      }
+      const workshop = await client.query(
+        `SELECT 1
+         FROM gestion_it.ticket_workshop_transfers
+         WHERE ticket_id = $1
+         LIMIT 1`,
+        [previous.id],
+      );
+      if (workshop.rowCount) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        response.status(409).json({
+          error: 'No se puede editar un reclamo que ya tiene una derivación a taller registrada.',
+        });
+        return;
+      }
+
+      const updated = await client.query(
+        `UPDATE gestion_it.tickets
+         SET titulo = $2, descripcion = $3, categoria = $4
+         WHERE id = $1
+         RETURNING id`,
+        [previous.id, details.titulo, details.descripcion, details.categoria],
+      );
+      if (!updated.rows[0]) throw new Error('No se pudo actualizar el reclamo.');
+      await recordOperatorAuditEvents(client, actor, [
+        {
+          action: 'Editó los datos de un reclamo abierto',
+          entityType: 'reclamo',
+          entityId: previous.id,
+          entityName: details.titulo,
+          details: {
+            resultado: 'exitoso',
+            anterior: {
+              titulo: previous.titulo,
+              descripcion: previous.descripcion,
+              categoria: previous.categoria,
+            },
+            posterior: details,
+          },
+        },
+      ]);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      response.locals['operatorAuditRecordedTransactionally'] = true;
+      const completeTicket = await loadTicket(pool, previous.id);
+      if (!completeTicket) {
+        response.status(500).json({ error: 'No se pudo recuperar el reclamo actualizado.' });
+        return;
+      }
+      response.json(completeTicket);
+      publishTicketEvent(completeTicket.id, 'updated', completeTicket.usuario_area_id);
+    } catch (error) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      next(error);
+    } finally {
+      client.release();
     }
   });
 
@@ -777,8 +1164,31 @@ export function createTicketsApi(pool: Pool): express.Router {
           return;
         }
 
+        await recordOperatorAuditEvents(client, operator, [
+          {
+            action: 'Registró la devolución y resolución de un reclamo',
+            entityType: 'reclamo',
+            entityId: ticketId,
+            entityName: 'Reclamo terminado',
+            details: {
+              resultado: 'exitoso',
+              derivacionId: transferId,
+              equipoAntes: activeTransfer.equipo,
+              identificacionAntes: activeTransfer.identificacion,
+              estadoAntes: ticket.rows[0].estado,
+              estadoDespues: 'Terminado',
+              estadoEquipoDespues: 'Devuelto',
+              resultadoEquipo: workshopReturn.resultadoEquipo,
+              equipoDevuelto: workshopReturn.equipoDevuelto,
+              identificacionDevuelta: workshopReturn.identificacionDevuelta,
+              motivoReemplazo: workshopReturn.motivoReemplazo,
+              solucion: workshopReturn.solucion,
+            },
+          },
+        ]);
         await client.query('COMMIT');
         transactionStarted = false;
+        response.locals['operatorAuditRecordedTransactionally'] = true;
         const completeTicket = await loadTicket(pool, ticketId);
         if (!completeTicket) {
           response.status(500).json({ error: 'No se pudo recuperar el reclamo actualizado.' });

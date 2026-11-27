@@ -3,13 +3,13 @@
     <div>
       <span class="eyebrow">DOSEP DIGITAL · CENTRO DE CONTROL</span>
       <h2>Dashboard operativo</h2>
-      <p>Un resumen en tiempo real del soporte y el parque informático.</p>
+      <p>Estado del parque informático, stock, tareas registradas y soporte.</p>
     </div>
     <div class="heading-meta">
       <span class="today-label">{{ todayLabel }}</span>
       <span class="connection-state" [class.connected]="liveConnected()" role="status">
         <span class="connection-dot"></span>
-        {{ liveConnected() ? 'En vivo' : 'Reconectando' }}
+        {{ liveConnected() ? 'Tickets en vivo' : 'Reconectando tickets' }}
       </span>
     </div>
   </header>
@@ -20,222 +20,621 @@
       <button type="button" (click)="reintentar()">Reintentar</button>
     </section>
   }
+  @if (locationsError()) {
+    <p class="dashboard-note" role="status">
+      {{ locationsError() }} Los filtros de ubicación pueden ser incompletos.
+    </p>
+  }
 
-  <section class="kpi-grid" aria-label="Indicadores clave">
-    <article class="kpi-card kpi-blue">
-      <span class="kpi-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path
-            d="M5 5.5h14A1.5 1.5 0 0 1 20.5 7v9a1.5 1.5 0 0 1-1.5 1.5h-6l-4 3v-3H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5Z"
-          />
-          <path d="M7.5 10h9m-9 3h6" />
-        </svg>
-      </span>
-      <div class="kpi-copy">
-        <span>Tickets activos</span>
-        @if (loading()) {
-          <strong class="metric-skeleton" aria-label="Cargando">—</strong>
-        } @else {
-          <strong>{{ activeTickets().length }}</strong>
-        }
-        <small>Reclamos abiertos o en proceso</small>
+  <section class="dashboard-filters dashboard-panel" aria-label="Filtros del dashboard">
+    <header class="panel-heading">
+      <div>
+        <span class="panel-eyebrow">VISTA DEL SISTEMA</span>
+        <h3>Filtros</h3>
       </div>
-    </article>
-
-    <article class="kpi-card kpi-orange">
-      <span class="kpi-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path
-            d="M4 19.5h16M6.5 19.5V8l5.5-3.5L17.5 8v11.5M9 10h.01M15 10h.01M9 13.5h.01M15 13.5h.01M10 19.5v-3.5h4v3.5"
-          />
-        </svg>
-      </span>
-      <div class="kpi-copy">
-        <span>Equipos en taller</span>
-        <strong>{{ workshopEquipment() }}</strong>
-        <small>Componentes en reparación</small>
-      </div>
-    </article>
-
-    <article class="kpi-card kpi-violet">
-      <span class="kpi-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M12 7v5l3.5 2M18.5 5.5l1-1" />
-        </svg>
-      </span>
-      <div class="kpi-copy">
-        <span>Aprobaciones pendientes</span>
-        <strong>{{ pendingApprovals() }}</strong>
-        <small>Validación de equipos por usuarios</small>
-      </div>
-    </article>
-
-    <article class="kpi-card kpi-red">
-      <span class="kpi-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path d="m12 3.5 9 16H3l9-16Z" />
-          <path d="M12 9v4.5m0 3h.01" />
-        </svg>
-      </span>
-      <div class="kpi-copy">
-        <span>Alertas de stock</span>
-        <strong>{{ lowStockItems().length }}</strong>
-        <small>Insumos en el mínimo o por debajo</small>
-      </div>
-    </article>
+      <span class="panel-period">Actualización en vivo para tickets</span>
+    </header>
+    <div class="filter-grid">
+      <label>
+        <span>Sede</span>
+        <select [ngModel]="filtroSede()" (ngModelChange)="cambiarFiltroSede($event)">
+          <option value="ALL">Todas las sedes</option>
+          <option value="CENTRAL">Casa Central</option>
+          <option value="DELEGATIONS">Delegaciones</option>
+        </select>
+      </label>
+      <label>
+        <span>Delegación</span>
+        <select
+          [ngModel]="filtroDelegacionId()"
+          (ngModelChange)="cambiarFiltroDelegacion($event)"
+          [disabled]="filtroSede() === 'CENTRAL'"
+        >
+          <option value="ALL">Todas las delegaciones</option>
+          @for (site of delegaciones(); track site.id) {
+            <option [value]="site.id">{{ site.nombre }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Área o sector</span>
+        <select [ngModel]="filtroAreaId()" (ngModelChange)="cambiarFiltroArea($event)">
+          <option value="ALL">Todas las áreas</option>
+          @for (area of areasDisponibles(); track area.id) {
+            <option [value]="area.id">{{ area.nombre }} · {{ nombreSede(areaSede(area)) }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Período de actividad</span>
+        <select [ngModel]="filtroPeriodo()" (ngModelChange)="cambiarFiltroPeriodo($event)">
+          <option value="7">Últimos 7 días</option>
+          <option value="30">Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+          <option value="ALL">Todo el historial</option>
+        </select>
+      </label>
+    </div>
+    <p class="filter-help">
+      El período filtra tickets, tareas y movimientos. Puestos, componentes, red y existencias son
+      el estado actual.
+    </p>
   </section>
 
-  <section class="analytics-grid" aria-label="Análisis de reclamos">
-    <article class="dashboard-panel category-panel">
-      <header class="panel-heading">
-        <div>
-          <span class="panel-eyebrow">RECLAMOS ACTIVOS</span>
-          <h3>Distribución por categoría</h3>
+  <section class="dashboard-section" aria-labelledby="park-title">
+    <header class="section-heading">
+      <div>
+        <span class="panel-eyebrow">INVENTARIO ACTUAL</span>
+        <h3 id="park-title">Parque informático</h3>
+      </div>
+    </header>
+    <div class="kpi-grid park-kpi-grid">
+      <article class="kpi-card kpi-blue">
+        <div class="kpi-copy">
+          <span>Puestos registrados</span>
+          <strong>{{ puestosFiltrados().length }}</strong>
+          <small>Ubicados por sede y área</small>
         </div>
-        <span class="panel-period">Ahora</span>
-      </header>
-      <div class="donut-layout">
-        <div class="donut-chart">
-          <canvas
-            #categoryCanvas
-            aria-label="Gráfico circular de tickets activos por categoría"
-          ></canvas>
-          <div class="donut-center" aria-hidden="true">
-            <strong>{{ activeTickets().length }}</strong>
-            <span>activos</span>
+      </article>
+      <article class="kpi-card kpi-violet">
+        <div class="kpi-copy">
+          <span>Componentes instalados</span>
+          <strong>{{ componentesRegistrados() }}</strong>
+          <small>Componentes asociados a puestos</small>
+        </div>
+      </article>
+      <article class="kpi-card kpi-orange">
+        <div class="kpi-copy">
+          <span>Equipos de red</span>
+          <strong>{{ equiposRedFiltrados().length }}</strong>
+          <small>Switches, routers y puntos de acceso</small>
+        </div>
+      </article>
+      <article class="kpi-card kpi-green">
+        <div class="kpi-copy">
+          <span>Equipos patrimoniales</span>
+          @if (patrimonioDashboardDisponible()) {
+            <strong>{{ patrimonioFiltrado().length }}</strong>
+            <small>Registros de patrimonio por sede</small>
+          } @else {
+            <strong>—</strong>
+            <small>
+              @if (!tareaDashboardDisponible()) {
+                No disponible para este rol
+              } @else if (filtroAreaId() !== 'ALL') {
+                El registro no contiene área
+              } @else if (hardwareAssetsLoading()) {
+                Cargando…
+              } @else {
+                No disponible
+              }
+            </small>
+          }
+        </div>
+      </article>
+      <article class="kpi-card kpi-red">
+        <div class="kpi-copy">
+          <span>Componentes en SCRAP</span>
+          @if (componentesScrapDisponibles()) {
+            <strong>{{ componentesScrap() }}</strong>
+            <small>Componentes retirados registrados como SCRAP</small>
+          } @else {
+            <strong>—</strong>
+            <small>El historial de retiro no permite filtrar con precisión por área</small>
+          }
+        </div>
+      </article>
+    </div>
+    @if (hardwareAssetsError()) {
+      <p class="dashboard-note" role="alert">{{ hardwareAssetsError() }}</p>
+    }
+    <p class="dashboard-note">
+      Los modelos de puestos, red y patrimonio no registran estado activo/inactivo. El registro
+      patrimonial tampoco tiene área, por eso su conteo se omite al filtrar por sector.
+    </p>
+    <div class="distribution-grid">
+      <article class="dashboard-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">UBICACIÓN</span>
+            <h3>Distribución por sede o delegación</h3>
           </div>
-        </div>
-        <ul class="category-legend" aria-label="Categorías de tickets activos">
-          @for (category of categories; track category; let index = $index) {
-            <li>
-              <span class="legend-swatch" [style.background]="categoryColor(index)"></span>
-              <span>{{ category }}</span>
-              <strong>{{ cantidadCategoria(category) }}</strong>
-            </li>
-          }
-        </ul>
-      </div>
-    </article>
-
-    <article class="dashboard-panel resolved-panel">
-      <header class="panel-heading">
-        <div>
-          <span class="panel-eyebrow">TENDENCIA DE SOPORTE</span>
-          <h3>Tickets resueltos</h3>
-        </div>
-        <span class="panel-period">Últimos 7 días</span>
-      </header>
-      <div class="bar-chart">
-        <canvas
-          #resolvedCanvas
-          aria-label="Gráfico de tickets resueltos durante los últimos siete días"
-        ></canvas>
-      </div>
-    </article>
+        </header>
+        @if (distribucionPorSede().length === 0) {
+          <p class="list-placeholder">No hay puestos ni equipos de red para estos filtros.</p>
+        } @else {
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sede</th>
+                  <th>Puestos</th>
+                  <th>Componentes</th>
+                  <th>Red</th>
+                  <th>Patrimonio</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of distribucionPorSede(); track row.id) {
+                  <tr>
+                    <td>{{ row.nombre }}</td>
+                    <td>{{ row.puestos }}</td>
+                    <td>{{ row.componentes }}</td>
+                    <td>{{ row.equiposRed }}</td>
+                    <td>
+                      {{ patrimonioDashboardDisponible() ? row.patrimonio : '—' }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </article>
+      <article class="dashboard-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">ORGANIZACIÓN</span>
+            <h3>Distribución por área</h3>
+          </div>
+        </header>
+        @if (distribucionPorArea().length === 0) {
+          <p class="list-placeholder">
+            No hay áreas con puestos o equipos de red para estos filtros.
+          </p>
+        } @else {
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Área</th>
+                  <th>Puestos</th>
+                  <th>Componentes</th>
+                  <th>Red</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of distribucionPorArea(); track row.id) {
+                  <tr>
+                    <td>{{ row.nombre }}</td>
+                    <td>{{ row.puestos }}</td>
+                    <td>{{ row.componentes }}</td>
+                    <td>{{ row.equiposRed }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </article>
+    </div>
   </section>
 
-  <section class="quick-lists" aria-label="Actividad y atención requerida">
-    <article class="dashboard-panel activity-panel">
-      <header class="panel-heading">
-        <div>
-          <span class="panel-eyebrow">ACTIVIDAD EN VIVO</span>
-          <h3>Últimos tickets ingresados</h3>
-        </div>
-        <span class="live-pill" [class.connected]="liveConnected()">
-          <span></span>{{ liveConnected() ? 'EN VIVO' : 'CONECTANDO' }}
-        </span>
-      </header>
-
-      @if (loading() && latestTickets().length === 0) {
-        <p class="list-placeholder" role="status">Cargando actividad reciente…</p>
-      } @else if (latestTickets().length === 0) {
-        <p class="list-placeholder">Todavía no ingresaron reclamos.</p>
-      } @else {
-        <ol class="activity-list">
-          @for (ticket of latestTickets(); track ticket.id) {
-            <li class="activity-item" [class.new-ticket]="newestTicketId() === ticket.id">
-              <span class="activity-indicator" aria-hidden="true"></span>
-              <div class="activity-content">
-                <div class="activity-title-row">
-                  <strong>{{ ticket.titulo }}</strong>
-                  <span
-                    class="ticket-state"
-                    [class]="ticket.estado.toLowerCase().replace(' ', '-')"
-                  >
-                    {{ ticket.estado }}
-                  </span>
-                </div>
-                <p>
-                  Área: {{ ticket.area_nombre ?? 'Sin área' }} <span aria-hidden="true">·</span>
-                  Afectado: {{ ticket.nombre_afectado ?? 'No especificado' }}
-                </p>
-              </div>
-              <time>{{ ticket.fecha_creacion | date: 'HH:mm' }}</time>
-            </li>
-          }
-        </ol>
+  <section class="dashboard-section" aria-labelledby="stock-title">
+    <header class="section-heading">
+      <div>
+        <span class="panel-eyebrow">DISPONIBILIDAD Y MOVIMIENTOS</span>
+        <h3 id="stock-title">Stock</h3>
+      </div>
+      <span class="panel-period">{{ periodoLabel() }}</span>
+    </header>
+    @if (metricasStockDisponibles()) {
+      <div class="kpi-grid stock-kpi-grid">
+        <article class="kpi-card kpi-blue">
+          <div class="kpi-copy">
+            <span>Unidades disponibles</span><strong>{{ stockDisponibleUnidades() }}</strong>
+            <small>Saldo actual en productos catalogados</small>
+          </div>
+        </article>
+        <article class="kpi-card kpi-violet">
+          <div class="kpi-copy">
+            <span>Productos catalogados</span><strong>{{ stockFiltrado().length }}</strong>
+            <small>Referencias de stock</small>
+          </div>
+        </article>
+        <article class="kpi-card kpi-orange">
+          <div class="kpi-copy">
+            <span>Stock bajo</span><strong>{{ lowStockItems().length }}</strong>
+            <small>Saldo mayor a cero y en o bajo el mínimo</small>
+          </div>
+        </article>
+        <article class="kpi-card kpi-red">
+          <div class="kpi-copy">
+            <span>Sin stock</span><strong>{{ zeroStockItems().length }}</strong>
+            <small>Productos con saldo cero o menor</small>
+          </div>
+        </article>
+      </div>
+      <div class="kpi-grid movement-kpi-grid">
+        <article class="kpi-card compact-kpi">
+          <div class="kpi-copy">
+            <span>Ingresos registrados</span
+            ><strong>{{ resumenStockMovimientos().ingresos }}</strong>
+            <small>Unidades ingresadas o ajustes positivos</small>
+          </div>
+        </article>
+        <article class="kpi-card compact-kpi">
+          <div class="kpi-copy">
+            <span>Egresos registrados</span><strong>{{ resumenStockMovimientos().egresos }}</strong>
+            <small>Unidades egresadas o ajustes negativos</small>
+          </div>
+        </article>
+        <article class="kpi-card compact-kpi">
+          <div class="kpi-copy">
+            <span>Transferencias internas</span
+            ><strong>{{ resumenStockMovimientos().transferencias }}</strong>
+            <small>Unidades transferidas entre sedes</small>
+          </div>
+        </article>
+      </div>
+      @if (filtroAreaId() !== 'ALL') {
+        <p class="dashboard-note">
+          El stock no está asignado a áreas en el modelo; sus indicadores se ocultan al filtrar por
+          área para no atribuir existencias incorrectamente.
+        </p>
       }
-    </article>
+      <div class="distribution-grid">
+        <article class="dashboard-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-eyebrow">CONTROL DE EXISTENCIAS</span>
+              <h3>Productos que requieren atención</h3>
+            </div>
+          </header>
+          <div class="stock-alert-grid">
+            <section>
+              <h4>Stock bajo</h4>
+              @if (lowStockItems().length === 0) {
+                <p class="list-placeholder short-placeholder">No hay productos bajo el mínimo.</p>
+              } @else {
+                <ul class="attention-list">
+                  @for (item of lowStockItems().slice(0, 5); track item.id) {
+                    <li>
+                      <span
+                        ><strong>{{ item.marca }}</strong
+                        ><small>{{ item.tipo }} · {{ item.especificacion }}</small></span
+                      >
+                      <span class="stock-level"
+                        >{{ item.cantidadDisponible }} <small>/ {{ item.stockMinimo }}</small></span
+                      >
+                    </li>
+                  }
+                </ul>
+              }
+            </section>
+            <section>
+              <h4>Sin stock</h4>
+              @if (zeroStockItems().length === 0) {
+                <p class="list-placeholder short-placeholder">No hay productos sin stock.</p>
+              } @else {
+                <ul class="attention-list">
+                  @for (item of zeroStockItems().slice(0, 5); track item.id) {
+                    <li>
+                      <span
+                        ><strong>{{ item.marca }}</strong
+                        ><small>{{ item.tipo }} · {{ item.especificacion }}</small></span
+                      >
+                      <span class="stock-level">{{ item.cantidadDisponible }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            </section>
+          </div>
+        </article>
+        <article class="dashboard-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-eyebrow">HISTORIAL</span>
+              <h3>Movimientos recientes</h3>
+            </div>
+          </header>
+          @if (movimientosRecientes().length === 0) {
+            <p class="list-placeholder">
+              No hay movimientos en el período y la ubicación seleccionados.
+            </p>
+          } @else {
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Tipo</th>
+                    <th>Sede</th>
+                    <th>Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (movement of movimientosRecientes(); track movement.id) {
+                    <tr>
+                      <td>{{ movement.fecha | date: 'dd/MM/yy HH:mm' }}</td>
+                      <td>{{ movement.tipo }}</td>
+                      <td>{{ nombreSedeMovimiento(movement) }}</td>
+                      <td class="detail-cell">{{ movement.detalle }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+          @if (filtroAreaId() !== 'ALL') {
+            <p class="filter-help">
+              Al filtrar por área solo se incluyen movimientos con un puesto o equipo de red
+              actualmente asociado a esa área.
+            </p>
+          }
+        </article>
+      </div>
+    } @else {
+      <p class="dashboard-note">
+        El stock no tiene relación con áreas o sectores. Elegí “Todas las áreas” para consultar
+        existencias y movimientos de stock.
+      </p>
+    }
+  </section>
 
-    <article class="dashboard-panel attention-panel">
-      <header class="panel-heading">
-        <div>
-          <span class="panel-eyebrow">ACCIÓN REQUERIDA</span>
-          <h3>Atención prioritaria</h3>
-        </div>
-        <span class="attention-count">{{ lowStockItems().length + pendingApprovals() }}</span>
-      </header>
-
-      <section class="attention-group" aria-labelledby="stock-alert-title">
-        <h4 id="stock-alert-title">
-          <span class="attention-icon stock-icon" aria-hidden="true">!</span>
-          Stock crítico
-        </h4>
-        @if (lowStockItems().length === 0) {
-          <p class="all-clear">Todos los insumos están por encima del mínimo.</p>
-        } @else {
-          <ul class="attention-list">
-            @for (item of lowStockItems().slice(0, 4); track item.id) {
+  <section class="dashboard-section" aria-labelledby="tasks-title">
+    <header class="section-heading">
+      <div>
+        <span class="panel-eyebrow">ACTIVIDAD OPERATIVA</span>
+        <h3 id="tasks-title">Registro de actividades</h3>
+      </div>
+      <span class="panel-period">{{ periodoLabel() }}</span>
+    </header>
+    @if (!tareaDashboardDisponible()) {
+      <p class="dashboard-note">
+        La consulta de tareas está disponible para los roles Admin y Operador.
+      </p>
+    } @else if (filtroAreaId() !== 'ALL') {
+      <p class="dashboard-note">
+        Las tareas registran sede y operador, pero no área. No se muestran indicadores de tareas
+        para un filtro por área.
+      </p>
+    } @else if (tasksError()) {
+      <section class="dashboard-error" role="alert">
+        <span>{{ tasksError() }}</span
+        ><button type="button" (click)="reintentar()">Reintentar</button>
+      </section>
+    } @else if (tasksLoading()) {
+      <p class="list-placeholder" role="status">Cargando tareas registradas…</p>
+    } @else {
+      <div class="kpi-grid">
+        <article class="kpi-card kpi-blue">
+          <div class="kpi-copy">
+            <span>Tareas registradas</span><strong>{{ tareasFiltradas().length }}</strong>
+            <small>Tareas registradas en el período</small>
+          </div>
+        </article>
+        <article class="kpi-card kpi-violet">
+          <div class="kpi-copy">
+            <span>Operadores con actividad</span><strong>{{ cantidadOperadoresTareas() }}</strong>
+            <small>Operadores con actividad registrada</small>
+          </div>
+        </article>
+        <article class="kpi-card kpi-orange">
+          <div class="kpi-copy">
+            <span>Tipos con actividad</span><strong>{{ tiposTareaConActividad() }}</strong>
+            <small>Clasificación registrada</small>
+          </div>
+        </article>
+      </div>
+      <p class="dashboard-note">
+        El registro actual de actividades no incluye un estado de tarea; no es posible calcular
+        tareas pendientes.
+      </p>
+      <div class="distribution-grid">
+        <article class="dashboard-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-eyebrow">CLASIFICACIÓN</span>
+              <h3>Tareas por tipo</h3>
+            </div>
+          </header>
+          <ul class="simple-count-list">
+            @for (row of tareasPorTipo(); track row.tipo) {
               <li>
-                <span
-                  ><strong>{{ item.marca }}</strong
-                  ><small>{{ item.tipo }} · {{ item.especificacion }}</small></span
-                >
-                <span class="stock-level"
-                  >{{ item.cantidadDisponible }} <small>/ {{ item.stockMinimo }}</small></span
-                >
+                <span>{{ row.tipo }}</span
+                ><strong>{{ row.cantidad }}</strong>
+              </li>
+            }
+          </ul>
+        </article>
+        <article class="dashboard-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-eyebrow">ACTIVIDAD</span>
+              <h3>Tareas por operador</h3>
+            </div>
+          </header>
+          @if (tareasPorOperador().length === 0) {
+            <p class="list-placeholder">No hay tareas registradas para estos filtros.</p>
+          } @else {
+            <ul class="simple-count-list">
+              @for (row of tareasPorOperador(); track row.operador) {
+                <li>
+                  <span>{{ row.operador }}</span
+                  ><strong>{{ row.cantidad }}</strong>
+                </li>
+              }
+            </ul>
+          }
+        </article>
+      </div>
+    }
+  </section>
+
+  <section class="dashboard-section" aria-labelledby="tickets-title">
+    <header class="section-heading">
+      <div>
+        <span class="panel-eyebrow">SOPORTE</span>
+        <h3 id="tickets-title">Tickets</h3>
+      </div>
+      <span class="panel-period">Creados · {{ periodoLabel() }}</span>
+    </header>
+    <div class="kpi-grid ticket-kpi-grid">
+      <article class="kpi-card kpi-orange">
+        <div class="kpi-copy">
+          <span>Abiertos</span><strong>{{ openTickets().length }}</strong
+          ><small>Estado actual: Abierto</small>
+        </div>
+      </article>
+      <article class="kpi-card kpi-blue">
+        <div class="kpi-copy">
+          <span>En proceso</span><strong>{{ inProgressTickets().length }}</strong
+          ><small>Estado actual: En proceso</small>
+        </div>
+      </article>
+      <article class="kpi-card kpi-green">
+        <div class="kpi-copy">
+          <span>Resueltos</span><strong>{{ resolvedTickets().length }}</strong
+          ><small>Terminado entre los tickets filtrados</small>
+        </div>
+      </article>
+      <article class="kpi-card kpi-red">
+        <div class="kpi-copy">
+          <span>En taller</span>
+          @if (workshopMetricasDisponibles()) {
+            <strong>{{ workshopEquipment() }}</strong>
+            <small>Equipos o componentes en reparación</small>
+          } @else {
+            <strong>—</strong>
+            <small>El inventario de taller no se vincula de forma fiable a un área</small>
+          }
+        </div>
+      </article>
+      <article class="kpi-card kpi-violet">
+        <div class="kpi-copy">
+          <span>Aprobaciones pendientes</span><strong>{{ pendingApprovals() }}</strong
+          ><small>Derivaciones a taller esperando validación</small>
+        </div>
+      </article>
+    </div>
+    <p class="dashboard-note">
+      Los estados se cuentan sobre tickets creados durante el período seleccionado; la resolución se
+      registra por estado actual.
+    </p>
+
+    <section class="analytics-grid" aria-label="Análisis de tickets">
+      <article class="dashboard-panel category-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">TICKETS ABIERTOS O EN PROCESO</span>
+            <h3>Distribución por categoría</h3>
+          </div>
+          <span class="panel-period">Filtrada</span>
+        </header>
+        <div class="donut-layout">
+          <div class="donut-chart">
+            <canvas #categoryCanvas aria-label="Tickets activos por categoría"></canvas>
+            <div class="donut-center" aria-hidden="true">
+              <strong>{{ activeTickets().length }}</strong
+              ><span>activos</span>
+            </div>
+          </div>
+          <ul class="category-legend" aria-label="Categorías de tickets">
+            @for (category of categories; track category; let index = $index) {
+              <li>
+                <span class="legend-swatch" [style.background]="categoryColor(index)"></span>
+                <span>{{ category }}</span
+                ><strong>{{ cantidadCategoria(category) }}</strong>
+              </li>
+            }
+          </ul>
+        </div>
+      </article>
+
+      <article class="dashboard-panel resolved-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">ESTADO ACTUAL</span>
+            <h3>Distribución por estado</h3>
+          </div>
+          <span class="panel-period">{{ ticketsFiltrados().length }} tickets</span>
+        </header>
+        <div class="bar-chart"><canvas #statusCanvas aria-label="Tickets por estado"></canvas></div>
+      </article>
+    </section>
+
+    <div class="distribution-grid ticket-lists">
+      <article class="dashboard-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">UBICACIÓN</span>
+            <h3>Tickets por sede</h3>
+          </div>
+        </header>
+        @if (ticketsPorSede().length === 0) {
+          <p class="list-placeholder">No hay tickets para estos filtros.</p>
+        } @else {
+          <ul class="simple-count-list">
+            @for (row of ticketsPorSede(); track row.id) {
+              <li>
+                <span>{{ row.nombre }}</span
+                ><strong>{{ row.cantidad }}</strong>
               </li>
             }
           </ul>
         }
-      </section>
-
-      <section class="attention-group approval-group" aria-labelledby="approval-title">
-        <h4 id="approval-title">
-          <span class="attention-icon approval-icon" aria-hidden="true">✓</span>
-          Esperando aprobación
-        </h4>
-        @if (pendingApprovals() === 0) {
-          <p class="all-clear">No hay derivaciones pendientes de validar.</p>
+      </article>
+      <article class="dashboard-panel activity-panel">
+        <header class="panel-heading">
+          <div>
+            <span class="panel-eyebrow">ACTIVIDAD RECIENTE</span>
+            <h3>Últimos tickets ingresados</h3>
+          </div>
+          <span class="live-pill" [class.connected]="liveConnected()"
+            ><span></span>{{ liveConnected() ? 'EN VIVO' : 'CONECTANDO' }}</span
+          >
+        </header>
+        @if (loading() && latestTickets().length === 0) {
+          <p class="list-placeholder" role="status">Cargando tickets…</p>
+        } @else if (latestTickets().length === 0) {
+          <p class="list-placeholder">No hay tickets para este período y ubicación.</p>
         } @else {
-          <ul class="attention-list">
-            @for (ticket of tickets(); track ticket.id) {
-              @if (ticket.taller; as transfer) {
-                @if (transfer.estado === 'Pendiente') {
-                  <li>
-                    <span>
-                      <strong>{{ transfer.equipo }}</strong>
-                      <small>{{ transfer.identificacion }} · {{ ticket.area_nombre ?? 'Sin área' }}</small>
-                    </span>
-                    <span class="pending-tag">Pendiente</span>
-                  </li>
-                }
-              }
+          <ol class="activity-list">
+            @for (ticket of latestTickets(); track ticket.id) {
+              <li class="activity-item" [class.new-ticket]="newestTicketId() === ticket.id">
+                <span class="activity-indicator" aria-hidden="true"></span>
+                <div class="activity-content">
+                  <div class="activity-title-row">
+                    <strong>{{ ticket.titulo }}</strong>
+                    <span
+                      class="ticket-state"
+                      [class]="ticket.estado.toLowerCase().replace(' ', '-')"
+                      >{{ ticket.estado }}</span
+                    >
+                  </div>
+                  <p>
+                    {{ ticket.sede_nombre ?? nombreSede(ticket.sede_id) }} ·
+                    {{ ticket.area_nombre ?? 'Sin área' }}
+                  </p>
+                </div>
+                <time>{{ ticket.fecha_creacion | date: 'dd/MM HH:mm' }}</time>
+              </li>
             }
-          </ul>
+          </ol>
         }
-      </section>
-    </article>
+      </article>
+    </div>
   </section>
 </main>

@@ -111,7 +111,7 @@
           (click)="cambiarVista('TAREAS')"
           [class.active]="vistaActiva() === 'TAREAS'"
         >
-          <span class="nav-icon">◷</span><span>Bitácora de tareas</span>
+          <span class="nav-icon">◷</span><span>Registro de actividades</span>
         </button>
         <button
           *ngIf="authService.user()?.role !== 'solicitante'"
@@ -239,7 +239,7 @@
           </ng-container>
         } @placeholder {
         } @loading (after 100ms) {
-          <p class="feedback" role="status">Cargando bitácora de tareas…</p>
+          <p class="feedback" role="status">Cargando registro de actividades…</p>
         }
         <ng-container *ngIf="authService.user()?.role !== 'solicitante'">
           <main *ngIf="vistaActiva() === 'PARQUE'" class="page-view">
@@ -290,8 +290,8 @@
                   <input
                     type="search"
                     [ngModel]="busquedaParque()"
-                    (ngModelChange)="busquedaParque.set($event)"
-                    placeholder="Usuario, marca o número de serie"
+                    (ngModelChange)="busquedaParque.set($event); paginaParque.set(1)"
+                    placeholder="Puesto, usuario, componente o serie"
                   />
                 </span>
               </label>
@@ -299,7 +299,7 @@
                 <span class="control-label">Piso</span>
                 <select
                   [ngModel]="pisoSeleccionadoId()"
-                  (ngModelChange)="pisoSeleccionadoId.set($event); areaSeleccionadaId.set('TODAS')"
+                  (ngModelChange)="pisoSeleccionadoId.set($event); areaSeleccionadaId.set('TODAS'); paginaParque.set(1)"
                 >
                   <option value="TODOS">Todos los pisos</option>
                   <option *ngFor="let piso of pisos()" [value]="piso.id">{{ piso.nombre }}</option>
@@ -309,7 +309,7 @@
                 <span class="control-label">Área</span>
                 <select
                   [ngModel]="areaSeleccionadaId()"
-                  (ngModelChange)="areaSeleccionadaId.set($event)"
+                  (ngModelChange)="areaSeleccionadaId.set($event); paginaParque.set(1)"
                 >
                   <option value="TODAS">Todas las áreas</option>
                   <option *ngFor="let area of areasFiltradas()" [value]="area.id">
@@ -317,6 +317,32 @@
                   </option>
                 </select>
               </label>
+              <label>
+                <span class="control-label">Componente</span>
+                <select
+                  [ngModel]="tipoComponenteParque()"
+                  (ngModelChange)="tipoComponenteParque.set($event); paginaParque.set(1)"
+                >
+                  <option value="">Todos los componentes</option>
+                  <option *ngFor="let tipo of tiposPerifericosCompletos" [value]="tipo">
+                    {{ tipo }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span class="control-label">Ordenar</span>
+                <select
+                  [ngModel]="ordenParque()"
+                  (ngModelChange)="ordenParque.set($event); paginaParque.set(1)"
+                >
+                  <option value="PUESTO">Nombre del puesto</option>
+                  <option value="USUARIO">Usuario asignado</option>
+                  <option value="COMPONENTES">Cantidad de componentes</option>
+                </select>
+              </label>
+              <button type="button" class="secondary-button" (click)="limpiarFiltrosParque()">
+                Limpiar filtros
+              </button>
               <span class="results-count">{{ puestosFiltrados().length }} resultados</span>
             </section>
 
@@ -346,7 +372,7 @@
             </section>
 
             <section *ngIf="vistaParque() === 'TARJETAS'" class="workstation-grid">
-              <article *ngFor="let puesto of puestosFiltrados()" class="workstation-card">
+              <article *ngFor="let puesto of puestosPaginados()" class="workstation-card">
                 <div class="workstation-heading">
                   <span class="record-icon">⌘</span>
                   <div class="workstation-title">
@@ -390,6 +416,14 @@
                   <button type="button" class="secondary-button" (click)="verFicha(puesto.id)">
                     Ver ficha
                   </button>
+                  <button
+                    *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+                    type="button"
+                    class="secondary-button"
+                    (click)="abrirEdicionPuesto(puesto)"
+                  >
+                    Editar datos
+                  </button>
                   <button type="button" class="text-button" (click)="verFicha(puesto.id)">
                     Ver detalles <span aria-hidden="true">→</span>
                   </button>
@@ -430,7 +464,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr *ngFor="let puesto of puestosFiltrados()">
+                    <tr *ngFor="let puesto of puestosPaginados()">
                       <td>
                         <strong>{{ puesto.nombrePuesto }}</strong>
                         <small>{{ puesto.usuarioAsignado }}</small>
@@ -468,6 +502,14 @@
                             Ver ficha
                           </button>
                           <button
+                            *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+                            type="button"
+                            class="secondary-button"
+                            (click)="abrirEdicionPuesto(puesto)"
+                          >
+                            Editar
+                          </button>
+                          <button
                             type="button"
                             class="secondary-button"
                             [disabled]="puesto.componentes.length === 0"
@@ -496,6 +538,33 @@
                 </table>
               </div>
             </section>
+
+            <nav
+              *ngIf="puestosFiltrados().length > parquePorPagina"
+              class="list-pagination"
+              aria-label="Paginación de puestos"
+            >
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaParque() <= 1"
+                (click)="paginaParque.update((page) => page - 1)"
+              >
+                Anterior
+              </button>
+              <span>
+                Página {{ paginaParque() }} de {{ paginasParque() }} ·
+                {{ puestosFiltrados().length }} resultados
+              </span>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaParque() >= paginasParque()"
+                (click)="paginaParque.update((page) => page + 1)"
+              >
+                Siguiente
+              </button>
+            </nav>
 
             <section
               *ngIf="puestoFicha(); let ficha"
@@ -666,11 +735,61 @@
             } @loading (after 100ms) {
               <p class="feedback" role="status">Preparando el envío de stock…</p>
             }
+            <section class="filter-panel stock-filter-panel" aria-label="Filtros de stock">
+              <label>
+                <span class="control-label">Buscar producto</span>
+                <input
+                  type="search"
+                  [ngModel]="busquedaStock()"
+                  (ngModelChange)="busquedaStock.set($event); paginaStock.set(1)"
+                  placeholder="Marca, código o descripción"
+                />
+              </label>
+              <label>
+                <span class="control-label">Tipo</span>
+                <select
+                  [ngModel]="tipoStockFiltro()"
+                  (ngModelChange)="tipoStockFiltro.set($event); paginaStock.set(1)"
+                >
+                  <option value="">Todos los tipos</option>
+                  <option *ngFor="let tipo of tiposPerifericosCompletos" [value]="tipo">
+                    {{ tipo }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span class="control-label">Estado de existencias</span>
+                <select
+                  [ngModel]="estadoStockFiltro()"
+                  (ngModelChange)="estadoStockFiltro.set($event); paginaStock.set(1)"
+                >
+                  <option value="TODOS">Todos</option>
+                  <option value="BAJO">Stock bajo</option>
+                  <option value="SIN_STOCK">Sin stock</option>
+                  <option value="DISPONIBLE">Disponible</option>
+                </select>
+              </label>
+              <label>
+                <span class="control-label">Ordenar</span>
+                <select
+                  [ngModel]="ordenStock()"
+                  (ngModelChange)="ordenStock.set($event); paginaStock.set(1)"
+                >
+                  <option value="NOMBRE">Nombre</option>
+                  <option value="CANTIDAD_ASC">Menor cantidad</option>
+                  <option value="CANTIDAD_DESC">Mayor cantidad</option>
+                </select>
+              </label>
+              <button type="button" class="secondary-button" (click)="limpiarFiltrosStock()">
+                Limpiar filtros
+              </button>
+              <span class="results-count">{{ stockFiltrado().length }} resultados</span>
+            </section>
             <section class="data-panel">
               <div class="panel-heading">
                 <div>
                   <h3>Inventario disponible</h3>
-                  <p>Existencias actuales por tipo y producto.</p>
+                  <p>Existencias actuales por tipo y producto en {{ sedeSeleccionada()?.nombre }}.</p>
                 </div>
               </div>
               <div class="table-scroll">
@@ -686,7 +805,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr *ngFor="let insumo of stock()">
+                    <tr *ngFor="let insumo of stockPaginado()">
                       <td>
                         <span class="type-badge">{{ insumo.tipo }}</span>
                       </td>
@@ -713,6 +832,14 @@
                       </td>
                       <td>
                         <button
+                          *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+                          type="button"
+                          class="secondary-button"
+                          (click)="abrirEdicionStock(insumo)"
+                        >
+                          Editar datos
+                        </button>
+                        <button
                           type="button"
                           class="secondary-button"
                           (click)="abrirAjusteStock(insumo)"
@@ -729,13 +856,45 @@
                         </button>
                       </td>
                     </tr>
-                    <tr *ngIf="stock().length === 0">
-                      <td colspan="6" class="table-empty">Todavía no hay productos en stock.</td>
+                    <tr *ngIf="stockFiltrado().length === 0">
+                      <td colspan="6" class="table-empty">
+                        {{
+                          stock().length === 0
+                            ? 'Todavía no hay productos en stock.'
+                            : 'No hay productos que coincidan con los filtros.'
+                        }}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </section>
+            <nav
+              *ngIf="stockFiltrado().length > stockPorPagina"
+              class="list-pagination"
+              aria-label="Paginación de productos en stock"
+            >
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaStock() <= 1"
+                (click)="paginaStock.update((page) => page - 1)"
+              >
+                Anterior
+              </button>
+              <span>
+                Página {{ paginaStock() }} de {{ paginasStock() }} · {{ stockFiltrado().length }}
+                resultados
+              </span>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaStock() >= paginasStock()"
+                (click)="paginaStock.update((page) => page + 1)"
+              >
+                Siguiente
+              </button>
+            </nav>
           </main>
 
           <main *ngIf="vistaActiva() === 'EDIFICIO'" class="page-view">
@@ -799,6 +958,18 @@
                     </h3>
                     <p>Áreas del piso seleccionado</p>
                   </div>
+                  <button
+                    *ngIf="
+                      pisoSeleccionadoEdificio() &&
+                      (authService.user()?.role === 'admin' ||
+                        authService.user()?.role === 'operator')
+                    "
+                    type="button"
+                    class="secondary-button"
+                    (click)="abrirEdicionPiso(pisoSeleccionadoEdificio())"
+                  >
+                    Editar piso
+                  </button>
                   <span *ngIf="pisoSeleccionadoEdificio()" class="count-badge"
                     >{{ areasDelPisoEdificio().length }} áreas</span
                   >
@@ -810,6 +981,14 @@
                       ><strong>{{ area.nombre }}</strong
                       ><small>{{ obtenerNombrePiso(area.pisoId) }}</small></span
                     >
+                    <button
+                      *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+                      type="button"
+                      class="secondary-button"
+                      (click)="abrirEdicionArea(area.id)"
+                    >
+                      Editar nombre
+                    </button>
                     <button
                       type="button"
                       class="icon-button danger-icon"
@@ -849,8 +1028,54 @@
                 ＋ Registrar equipo
               </button>
             </section>
+            <section class="filter-panel network-filter-panel" aria-label="Filtros de equipos de red">
+              <label>
+                <span class="control-label">Buscar equipo</span>
+                <input
+                  type="search"
+                  [ngModel]="busquedaRed()"
+                  (ngModelChange)="busquedaRed.set($event); paginaRed.set(1)"
+                  placeholder="Marca, modelo, código o área"
+                />
+              </label>
+              <label>
+                <span class="control-label">Tipo</span>
+                <select
+                  [ngModel]="tipoRedFiltro()"
+                  (ngModelChange)="tipoRedFiltro.set($event); paginaRed.set(1)"
+                >
+                  <option value="">Todos los tipos</option>
+                  <option *ngFor="let tipo of tiposEquipoRed" [value]="tipo">{{ tipo }}</option>
+                </select>
+              </label>
+              <label>
+                <span class="control-label">Área o sector</span>
+                <select
+                  [ngModel]="areaRedFiltro()"
+                  (ngModelChange)="areaRedFiltro.set($event); paginaRed.set(1)"
+                >
+                  <option value="TODAS">Todas las áreas</option>
+                  <option *ngFor="let area of areas()" [value]="area.id">{{ area.nombre }}</option>
+                </select>
+              </label>
+              <label>
+                <span class="control-label">Ordenar</span>
+                <select
+                  [ngModel]="ordenRed()"
+                  (ngModelChange)="ordenRed.set($event); paginaRed.set(1)"
+                >
+                  <option value="MARCA">Marca y modelo</option>
+                  <option value="TIPO">Tipo</option>
+                  <option value="AREA">Área</option>
+                </select>
+              </label>
+              <button type="button" class="secondary-button" (click)="limpiarFiltrosRed()">
+                Limpiar filtros
+              </button>
+              <span class="results-count">{{ equiposRedFiltrados().length }} resultados</span>
+            </section>
             <section class="record-grid network-grid">
-              <article *ngFor="let equipo of equiposRed()" class="record-card">
+              <article *ngFor="let equipo of equiposRedPaginados()" class="record-card">
                 <span class="record-icon">⌁</span>
                 <div class="record-info">
                   <span class="type-badge">{{ equipo.tipo }}</span>
@@ -861,6 +1086,14 @@
                   >
                 </div>
                 <button
+                  *ngIf="authService.user()?.role === 'admin' || authService.user()?.role === 'operator'"
+                  type="button"
+                  class="secondary-button"
+                  (click)="abrirEdicionEquipoRed(equipo)"
+                >
+                  Editar datos
+                </button>
+                <button
                   type="button"
                   class="icon-button danger-icon"
                   [attr.aria-label]="'Eliminar ' + equipo.marca + ' ' + equipo.modelo"
@@ -869,12 +1102,38 @@
                   ×
                 </button>
               </article>
-              <div *ngIf="equiposRed().length === 0" class="empty-state">
+              <div *ngIf="equiposRedFiltrados().length === 0" class="empty-state">
                 <span class="empty-icon">⌁</span>
-                <h3>Sin equipos registrados</h3>
-                <p>Agregá equipos de red para mantenerlos organizados.</p>
+                <h3>No hay equipos para estos filtros</h3>
+                <p>Probá limpiar los filtros o registrar un equipo de red.</p>
               </div>
             </section>
+            <nav
+              *ngIf="equiposRedFiltrados().length > redPorPagina"
+              class="list-pagination"
+              aria-label="Paginación de equipos de red"
+            >
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaRed() <= 1"
+                (click)="paginaRed.update((page) => page - 1)"
+              >
+                Anterior
+              </button>
+              <span>
+                Página {{ paginaRed() }} de {{ paginasRed() }} ·
+                {{ equiposRedFiltrados().length }} resultados
+              </span>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaRed() >= paginasRed()"
+                (click)="paginaRed.update((page) => page + 1)"
+              >
+                Siguiente
+              </button>
+            </nav>
           </main>
 
           <main *ngIf="vistaActiva() === 'TALLER'" class="page-view">
@@ -917,6 +1176,7 @@
                   >Estado
                   <select
                     [ngModel]="retirado.estado"
+                    [disabled]="componenteEstadoActualizandoId() === retirado.id"
                     (ngModelChange)="cambiarEstadoRetirado(retirado.id, $event)"
                   >
                     <option *ngFor="let estado of estadosComponente" [ngValue]="estado">
@@ -956,7 +1216,7 @@
                     "
                     (click)="backupFileInput.click()"
                   >
-                    Restaurar respaldo
+                    {{ backupImportando() ? 'Restaurando…' : 'Restaurar respaldo' }}
                   </button>
                   <input
                     #backupFileInput
@@ -968,7 +1228,7 @@
                   />
                 </ng-container>
                 <label class="report-site-filter">
-                  Incluir en Excel
+                  Sede para el libro integral
                   <select [ngModel]="sedeReporteId()" (ngModelChange)="sedeReporteId.set($event)">
                     <option value="TODAS">Todas las sedes</option>
                     <option *ngFor="let sede of sedes()" [value]="sede.id">
@@ -977,10 +1237,11 @@
                   </select>
                 </label>
                 <button type="button" class="primary-button" (click)="exportarInventarioExcel()">
-                  ↓ Exportar a Excel
+                  ↓ Exportar libro integral
                 </button>
               </div>
             </section>
+            <app-reports></app-reports>
             <section *ngIf="authService.user()?.role === 'admin'" class="data-panel">
               <div class="panel-heading">
                 <div>
@@ -1036,6 +1297,88 @@
                   {{ creandoSede() ? 'Creando…' : 'Crear delegación' }}
                 </button>
               </form>
+              <div class="admin-user-list location-list">
+                <article *ngFor="let sede of sedes()">
+                  <div class="admin-user-details">
+                    <strong>{{ sede.nombre }}</strong>
+                    <span>{{ sede.tipo === 'CENTRAL' ? 'Casa Central' : 'Delegación' }}</span>
+                    <span>{{ sede.departamento || 'Sin departamento' }} · {{ sede.localidad || 'Sin localidad' }}</span>
+                    <span>{{ sede.direccion || 'Sin dirección registrada' }}</span>
+                  </div>
+                  <button
+                    *ngIf="sedeEnEdicionId() !== sede.id"
+                    type="button"
+                    class="secondary-button"
+                    (click)="iniciarEdicionSede(sede)"
+                  >
+                    Editar datos
+                  </button>
+                  <form
+                    *ngIf="sedeEnEdicionId() === sede.id"
+                    class="user-edit-form"
+                    (ngSubmit)="guardarEdicionSede()"
+                  >
+                    <label>
+                      Nombre
+                      <input
+                        required
+                        maxlength="120"
+                        name="editLocationName-{{ sede.id }}"
+                        [ngModel]="sedeEdicion().nombre"
+                        (ngModelChange)="actualizarCampoSede('nombre', $event)"
+                      />
+                    </label>
+                    <label>
+                      Departamento
+                      <input
+                        maxlength="120"
+                        name="editLocationDepartment-{{ sede.id }}"
+                        [ngModel]="sedeEdicion().departamento"
+                        (ngModelChange)="actualizarCampoSede('departamento', $event)"
+                      />
+                    </label>
+                    <label>
+                      Localidad
+                      <input
+                        maxlength="120"
+                        name="editLocationCity-{{ sede.id }}"
+                        [ngModel]="sedeEdicion().localidad"
+                        (ngModelChange)="actualizarCampoSede('localidad', $event)"
+                      />
+                    </label>
+                    <label>
+                      Dirección
+                      <input
+                        maxlength="300"
+                        name="editLocationAddress-{{ sede.id }}"
+                        [ngModel]="sedeEdicion().direccion"
+                        (ngModelChange)="actualizarCampoSede('direccion', $event)"
+                      />
+                    </label>
+                    <small class="form-hint field-full">
+                      El tipo, el identificador, la vigencia y las relaciones de la sede no se modifican.
+                    </small>
+                    <p *ngIf="errorEdicionSede()" class="inline-error field-full" role="alert">
+                      {{ errorEdicionSede() }}
+                    </p>
+                    <button
+                      type="submit"
+                      class="primary-button"
+                      [disabled]="actualizandoSede()"
+                    >
+                      {{ actualizandoSede() ? 'Guardando…' : 'Guardar cambios' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="text-button"
+                      [disabled]="actualizandoSede()"
+                      (click)="cancelarEdicionSede()"
+                    >
+                      Cancelar
+                    </button>
+                  </form>
+                </article>
+              </div>
             </section>
             <section class="stats-grid">
               <article class="stat-card">
@@ -1260,13 +1603,82 @@
                 <div>
                   <h3>Actividad del inventario</h3>
                   <p>
-                    Mostrando {{ historialVisible().length }} de
-                    {{ historial().length }} movimientos recientes
+                    {{ actividadFiltrada().length }} resultados · página {{ paginaActividad() }} de
+                    {{ paginasActividad() }}
                   </p>
                 </div>
               </div>
-              <div *ngIf="historial().length === 0" class="empty-inline">
-                Todavía no hay movimientos para mostrar.
+              <section class="filter-panel activity-filter-panel" aria-label="Filtros de actividad">
+                <label>
+                  <span class="control-label">Buscar</span>
+                  <input
+                    type="search"
+                    [ngModel]="busquedaActividad()"
+                    (ngModelChange)="busquedaActividad.set($event); paginaActividad.set(1)"
+                    placeholder="Detalle o identificador"
+                  />
+                </label>
+                <label>
+                  <span class="control-label">Tipo de actividad</span>
+                  <select
+                    [ngModel]="tipoActividadFiltro()"
+                    (ngModelChange)="tipoActividadFiltro.set($event); paginaActividad.set(1)"
+                  >
+                    <option value="">Todos los tipos</option>
+                    <option *ngFor="let tipo of tiposActividad()" [value]="tipo">{{ tipo }}</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="control-label">Operador</span>
+                  <input
+                    type="search"
+                    [ngModel]="operadorActividadFiltro()"
+                    (ngModelChange)="operadorActividadFiltro.set($event); paginaActividad.set(1)"
+                    placeholder="Nombre del operador"
+                  />
+                </label>
+                <label>
+                  <span class="control-label">Sede / delegación</span>
+                  <select
+                    [ngModel]="sedeActividadFiltro()"
+                    (ngModelChange)="sedeActividadFiltro.set($event); paginaActividad.set(1)"
+                  >
+                    <option value="TODAS">Todas las sedes</option>
+                    <option *ngFor="let sede of sedes()" [value]="sede.id">{{ sede.nombre }}</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="control-label">Desde</span>
+                  <input
+                    type="date"
+                    [ngModel]="desdeActividad()"
+                    (ngModelChange)="desdeActividad.set($event); paginaActividad.set(1)"
+                  />
+                </label>
+                <label>
+                  <span class="control-label">Hasta</span>
+                  <input
+                    type="date"
+                    [ngModel]="hastaActividad()"
+                    (ngModelChange)="hastaActividad.set($event); paginaActividad.set(1)"
+                  />
+                </label>
+                <label>
+                  <span class="control-label">Orden</span>
+                  <select
+                    [ngModel]="ordenActividad()"
+                    (ngModelChange)="ordenActividad.set($event); paginaActividad.set(1)"
+                  >
+                    <option value="NEWEST">Más recientes</option>
+                    <option value="OLDEST">Más antiguas</option>
+                  </select>
+                </label>
+                <button type="button" class="secondary-button" (click)="limpiarFiltrosActividad()">
+                  Limpiar filtros
+                </button>
+              </section>
+              <div *ngIf="actividadFiltrada().length === 0" class="empty-inline">
+                No hay movimientos para los filtros seleccionados.
               </div>
               <article *ngFor="let movimiento of historialVisible()" class="history-item">
                 <span
@@ -1290,14 +1702,32 @@
                 </div>
                 <time>{{ movimiento.fecha | date: 'dd/MM/yyyy HH:mm' }}</time>
               </article>
-              <button
-                *ngIf="historialVisible().length < historial().length"
-                type="button"
-                class="secondary-button history-more-button"
-                (click)="mostrarMasActividad()"
+              <nav
+                *ngIf="actividadFiltrada().length > actividadPorPagina"
+                class="list-pagination"
+                aria-label="Paginación del historial de inventario"
               >
-                Mostrar 10 movimientos más
-              </button>
+                <button
+                  type="button"
+                  class="secondary-button"
+                  [disabled]="paginaActividad() <= 1"
+                  (click)="paginaActividad.update((page) => page - 1)"
+                >
+                  Anterior
+                </button>
+                <span>
+                  Página {{ paginaActividad() }} de {{ paginasActividad() }} ·
+                  {{ actividadFiltrada().length }} resultados
+                </span>
+                <button
+                  type="button"
+                  class="secondary-button"
+                  [disabled]="paginaActividad() >= paginasActividad()"
+                  (click)="paginaActividad.update((page) => page + 1)"
+                >
+                  Siguiente
+                </button>
+              </nav>
             </section>
           </main>
           @defer (when vistaActiva() === 'PATRIMONIO') {
@@ -1561,70 +1991,85 @@
       </div>
 
       <footer class="dialog-actions">
-        <button type="button" class="secondary-button" (click)="cerrarModal()">Cancelar</button>
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="guardandoModal()"
+          (click)="cerrarModal()"
+        >
+          Cancelar
+        </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_PUESTO'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarNuevoPuesto()"
         >
-          Guardar puesto
+          {{ guardandoModal() ? 'Guardando…' : 'Guardar puesto' }}
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_COMPONENTE'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarComponenteManual()"
         >
-          Guardar componente
+          {{ guardandoModal() ? 'Guardando…' : 'Guardar componente' }}
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_STOCK'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarNuevoStock()"
         >
-          Agregar al stock
+          {{ guardandoModal() ? 'Guardando…' : 'Agregar al stock' }}
         </button>
         <button
           *ngIf="modalActivo() === 'SALDO_INICIAL'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarSaldoInicial()"
         >
-          Guardar saldo inicial
+          {{ guardandoModal() ? 'Guardando…' : 'Guardar saldo inicial' }}
         </button>
         <button
           *ngIf="modalActivo() === 'AJUSTE_STOCK'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarAjusteStock()"
         >
-          Ajustar saldo
+          {{ guardandoModal() ? 'Guardando…' : 'Ajustar saldo' }}
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_PISO'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarPiso()"
         >
-          Crear piso
+          {{ guardandoModal() ? 'Guardando…' : 'Crear piso' }}
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVA_AREA'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarArea()"
         >
-          Crear área
+          {{ guardandoModal() ? 'Guardando…' : 'Crear área' }}
         </button>
         <button
           *ngIf="modalActivo() === 'NUEVO_EQUIPO_RED'"
           type="button"
           class="primary-button"
+          [disabled]="guardandoModal()"
           (click)="guardarEquipoRed()"
         >
-          Registrar equipo
+          {{ guardandoModal() ? 'Guardando…' : 'Registrar equipo' }}
         </button>
       </footer>
     </article>
@@ -1743,6 +2188,207 @@
           (click)="guardarEdicionComponente()"
         >
           {{ guardandoEdicionComponente() ? 'Guardando…' : 'Guardar corrección' }}
+        </button>
+      </footer>
+    </article>
+  </section>
+
+  <section
+    *ngIf="registroEnEdicion(); let editor"
+    class="modal-backdrop"
+    (click)="cancelarEdicionInventario()"
+  >
+    <article
+      class="dialog form-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inventory-edit-title"
+      (click)="$event.stopPropagation()"
+    >
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow">EDICIÓN CONTROLADA</span>
+          <h2 id="inventory-edit-title">
+            {{
+              editor.tipo === 'PUESTO'
+                ? 'Editar puesto'
+                : editor.tipo === 'STOCK'
+                  ? 'Editar producto de stock'
+                  : editor.tipo === 'RED'
+                    ? 'Editar equipo de red'
+                    : editor.tipo === 'AREA'
+                      ? 'Editar área'
+                      : 'Editar piso'
+            }}
+          </h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Cerrar edición"
+          [disabled]="guardandoEdicionInventario()"
+          (click)="cancelarEdicionInventario()"
+        >
+          ×
+        </button>
+      </header>
+      <p class="dialog-intro">
+        Se conservarán el identificador y las relaciones de ubicación.
+        <span *ngIf="editor.tipo === 'STOCK'">
+          El saldo, los movimientos y el código de seguimiento no se modificarán.
+        </span>
+        <span *ngIf="editor.tipo === 'RED'">
+          El área y el código de seguimiento no se modificarán; para reubicarlo usá Transferencias.
+        </span>
+        <span *ngIf="editor.tipo === 'AREA'">
+          El piso y los activos relacionados no se modificarán.
+        </span>
+        <span *ngIf="editor.tipo === 'PISO'">
+          La sede y las áreas relacionadas no se modificarán.
+        </span>
+        <span *ngIf="editor.tipo === 'PUESTO'">
+          El área, el código, los componentes y los movimientos históricos no se modificarán.
+        </span>
+      </p>
+      <div class="form-fields">
+        <label class="field-full">ID interno<input [ngModel]="editor.id" disabled /></label>
+        <ng-container *ngIf="editor.tipo === 'PUESTO'">
+          <label class="field-full">
+            Nombre del puesto
+            <input
+              required
+              maxlength="120"
+              [ngModel]="editor.nombrePuesto"
+              (ngModelChange)="actualizarEdicionPuesto('nombrePuesto', $event)"
+            />
+          </label>
+          <label class="field-full">
+            Usuario asignado
+            <input
+              required
+              maxlength="200"
+              [ngModel]="editor.usuarioAsignado"
+              (ngModelChange)="actualizarEdicionPuesto('usuarioAsignado', $event)"
+            />
+          </label>
+        </ng-container>
+        <ng-container *ngIf="editor.tipo === 'STOCK'">
+          <label>
+            Tipo de producto
+            <select
+              [ngModel]="editor.tipoStock"
+              (ngModelChange)="actualizarEdicionStock('tipoStock', $event)"
+            >
+              <option *ngFor="let tipo of tiposPerifericosCompletos" [ngValue]="tipo">
+                {{ tipo }}
+              </option>
+            </select>
+          </label>
+          <label>
+            Marca
+            <input
+              required
+              maxlength="120"
+              [ngModel]="editor.marca"
+              (ngModelChange)="actualizarEdicionStock('marca', $event)"
+            />
+          </label>
+          <label class="field-full">
+            Especificación
+            <input
+              required
+              maxlength="500"
+              [ngModel]="editor.especificacion"
+              (ngModelChange)="actualizarEdicionStock('especificacion', $event)"
+            />
+          </label>
+          <label>
+            Stock mínimo
+            <input
+              type="number"
+              min="0"
+              step="1"
+              [ngModel]="editor.stockMinimo"
+              (ngModelChange)="actualizarEdicionStock('stockMinimo', $event)"
+            />
+          </label>
+        </ng-container>
+        <ng-container *ngIf="editor.tipo === 'RED'">
+          <label>
+            Tipo de equipo
+            <select
+              [ngModel]="editor.tipoRed"
+              (ngModelChange)="actualizarEdicionEquipoRed('tipoRed', $event)"
+            >
+              <option *ngFor="let tipo of tiposEquipoRed" [ngValue]="tipo">{{ tipo }}</option>
+            </select>
+          </label>
+          <label>
+            Marca
+            <input
+              required
+              maxlength="120"
+              [ngModel]="editor.marca"
+              (ngModelChange)="actualizarEdicionEquipoRed('marca', $event)"
+            />
+          </label>
+          <label class="field-full">
+            Modelo
+            <input
+              required
+              maxlength="120"
+              [ngModel]="editor.modelo"
+              (ngModelChange)="actualizarEdicionEquipoRed('modelo', $event)"
+            />
+          </label>
+        </ng-container>
+        <label *ngIf="editor.tipo === 'AREA'" class="field-full">
+          Nombre del área
+          <input
+            required
+            maxlength="120"
+            [ngModel]="editor.nombreArea"
+            (ngModelChange)="actualizarEdicionArea($event)"
+          />
+        </label>
+        <ng-container *ngIf="editor.tipo === 'PISO'">
+          <label class="field-full">
+            Nombre del piso
+            <input
+              required
+              maxlength="120"
+              [ngModel]="editor.nombrePiso"
+              (ngModelChange)="actualizarEdicionPiso('nombrePiso', $event)"
+            />
+          </label>
+          <label>
+            Nivel
+            <input
+              type="number"
+              min="0"
+              step="1"
+              [ngModel]="editor.nivelPiso"
+              (ngModelChange)="actualizarEdicionPiso('nivelPiso', $event)"
+            />
+          </label>
+        </ng-container>
+      </div>
+      <footer class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="guardandoEdicionInventario()"
+          (click)="cancelarEdicionInventario()"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          class="primary-button"
+          [disabled]="guardandoEdicionInventario()"
+          (click)="guardarEdicionInventario()"
+        >
+          {{ guardandoEdicionInventario() ? 'Guardando…' : 'Guardar cambios' }}
         </button>
       </footer>
     </article>
@@ -1912,9 +2558,10 @@
         <strong>Confirmación del movimiento</strong>
         <p>
           Se retirará <b>{{ componenteSaliente()?.tipo }} · {{ componenteSaliente()?.marca }}</b>
-          del puesto y se instalará
-          <b>{{ insumoEntrante()?.tipo }} · {{ insumoEntrante()?.marca }}</b
-          >. El stock de este último disminuirá en una unidad.
+          del puesto {{ reemplazoPuesto()?.nombrePuesto }}. Se trasladará
+          <b>{{ insumoEntrante()?.tipo }} · {{ insumoEntrante()?.marca }} · {{ insumoEntrante()?.especificacion }}</b>
+          desde Casa Central al puesto como reemplazo (cantidad: 1); el saldo disponible
+          disminuirá en una unidad.
         </p>
         <p>
           Motivo registrado: <strong>{{ motivoReemplazo() }}</strong>
@@ -1982,14 +2629,89 @@
       <p *ngIf="confirmacion.tipo === 'PISO' || confirmacion.tipo === 'AREA'" class="form-hint">
         No se podrá eliminar si tiene elementos relacionados.
       </p>
+      <p *ngIf="confirmacion.tipo === 'PUESTO'" class="form-hint">
+        Se quitará el puesto y la persona asociada quedará sin ese puesto asignado.
+      </p>
+      <p *ngIf="confirmacion.tipo === 'STOCK'" class="form-hint">
+        Se quitará el producto y su saldo disponible del inventario; esta acción no se puede deshacer.
+      </p>
+      <p *ngIf="confirmacion.tipo === 'RED'" class="form-hint">
+        Se quitará el equipo de red del inventario y se registrará su baja.
+      </p>
       <footer class="dialog-actions">
-        <button type="button" class="secondary-button" (click)="cancelarEliminacion()">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="eliminandoRegistro()"
+          (click)="cancelarEliminacion()"
+        >
           Cancelar
         </button>
-        <button type="button" class="danger-button" (click)="confirmarEliminacion()">
-          Eliminar
+        <button
+          type="button"
+          class="danger-button"
+          [disabled]="eliminandoRegistro()"
+          (click)="confirmarEliminacion()"
+        >
+          {{ eliminandoRegistro() ? 'Eliminando…' : 'Eliminar' }}
         </button>
       </footer>
+    </article>
+  </section>
+
+  <section
+    *ngIf="inventoryService.conflictoInventario(); let conflicto"
+    class="modal-backdrop conflict-backdrop"
+  >
+    <article
+      class="dialog conflict-dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="inventory-conflict-title"
+    >
+      <span class="confirmation-icon">!</span>
+      <h2 id="inventory-conflict-title">Conflicto de revisión</h2>
+      <p>
+        Tus cambios locales se conservaron. El servidor ahora tiene la revisión
+        <strong>{{ conflicto.revision }}</strong>; por seguridad no se enviarán más cambios hasta
+        resolver la diferencia.
+      </p>
+      <p>
+        Descargá ambas versiones, combiná los cambios fuera del sistema y cargá un respaldo
+        combinado. No cargues sin revisar una de las dos versiones: el archivo reemplaza el
+        inventario completo.
+      </p>
+      <div class="conflict-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="resolviendoConflicto()"
+          (click)="descargarVersionConflicto('local')"
+        >
+          Descargar borrador local
+        </button>
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="resolviendoConflicto()"
+          (click)="descargarVersionConflicto('servidor')"
+        >
+          Descargar versión del servidor
+        </button>
+      </div>
+      <label class="conflict-upload">
+        Respaldo combinado revisado
+        <input
+          type="file"
+          accept="application/json,.json"
+          [disabled]="resolviendoConflicto()"
+          (change)="resolverConflictoJson($event)"
+        />
+      </label>
+      <p class="form-hint">
+        Al confirmar, el sistema intentará guardar el archivo con la revisión {{ conflicto.revision
+        }}. Si el servidor vuelve a cambiar, se solicitará resolver el conflicto otra vez.
+      </p>
     </article>
   </section>
 

@@ -1,0 +1,310 @@
+<section class="reports-panel" aria-labelledby="reports-title">
+  <header class="reports-heading">
+    <div>
+      <span class="eyebrow">CONSULTA ADMINISTRATIVA</span>
+      <h2 id="reports-title">Reportes y exportaciones</h2>
+      <p>Consultá los datos registrados y exportá el conjunto completo de resultados filtrados.</p>
+    </div>
+    <div class="report-actions">
+      <button
+        type="button"
+        class="secondary-button"
+        [disabled]="loading() || exportingExcel() || !previewMatchesFilters()"
+        (click)="exportarPdf()"
+      >
+        Imprimir / Guardar PDF
+      </button>
+      <button
+        type="button"
+        class="primary-button"
+        [disabled]="loading() || exportingExcel() || !previewMatchesFilters()"
+        (click)="exportarExcel()"
+      >
+        {{ exportingExcel() ? 'Generando Excel…' : 'Exportar Excel' }}
+      </button>
+    </div>
+  </header>
+
+  <label class="report-selector">
+    <span>Reporte</span>
+    <select [ngModel]="reportId()" (ngModelChange)="cambiarReporte($event)">
+      @for (option of reportOptions(); track option.id) {
+        <option [value]="option.id">{{ option.label }}</option>
+      }
+    </select>
+  </label>
+
+  <section class="report-filters" aria-label="Filtros del reporte">
+    <label>
+      <span>Búsqueda</span>
+      <input
+        type="search"
+        [ngModel]="search()"
+        (ngModelChange)="search.set($event)"
+        placeholder="Nombre, código o descripción"
+      />
+    </label>
+
+    @if (reportId() !== 'activity') {
+      <label>
+        <span>Sede / delegación</span>
+        <select [ngModel]="site()" (ngModelChange)="site.set($event)">
+          <option value="">Todas las sedes</option>
+          @for (location of locationsService.sedes(); track location.id) {
+            <option [value]="location.id">{{ location.nombre }}</option>
+          }
+        </select>
+      </label>
+    }
+
+    @if (
+      reportId() === 'inventory' ||
+      reportId() === 'transfers' ||
+      reportId() === 'tickets' ||
+      reportId() === 'tasks'
+    ) {
+      <label>
+        <span>Área / sector</span>
+        <input
+          type="search"
+          [ngModel]="area()"
+          (ngModelChange)="area.set($event)"
+          placeholder="Nombre del área"
+        />
+      </label>
+    }
+
+    @if (reportId() !== 'inventory') {
+      <label>
+        <span>
+          {{
+            reportId() === 'tickets'
+              ? 'Solicitante'
+              : reportId() === 'transfers'
+                ? 'Responsable'
+                : 'Operador'
+          }}
+        </span>
+        <input
+          type="search"
+          [ngModel]="operator()"
+          (ngModelChange)="operator.set($event)"
+          placeholder="Nombre de usuario"
+        />
+      </label>
+    }
+
+    <label>
+      <span>Desde</span>
+      <input type="date" [ngModel]="from()" (ngModelChange)="from.set($event)" />
+    </label>
+    <label>
+      <span>Hasta</span>
+      <input type="date" [ngModel]="to()" (ngModelChange)="to.set($event)" />
+    </label>
+
+    @if (reportId() === 'inventory') {
+      <label>
+        <span>Clase de activo</span>
+        <select [ngModel]="type()" (ngModelChange)="type.set($event)">
+          <option value="">Todas las clases</option>
+          @for (assetClass of inventoryClasses; track assetClass) {
+            <option [value]="assetClass">{{ assetClass }}</option>
+          }
+        </select>
+      </label>
+    } @else if (reportId() === 'stock') {
+      <label>
+        <span>Tipo de producto o movimiento</span>
+        <select [ngModel]="type()" (ngModelChange)="type.set($event)">
+          <option value="">Todos los tipos</option>
+          @for (stockType of stockTypes; track stockType) {
+            <option [value]="stockType">{{ stockType }}</option>
+          }
+          <option value="INGRESO_STOCK">INGRESO_STOCK</option>
+          <option value="TRANSFERENCIA_STOCK">TRANSFERENCIA_STOCK</option>
+          <option value="AJUSTE_STOCK">AJUSTE_STOCK</option>
+          <option value="SALDO_INICIAL">SALDO_INICIAL</option>
+        </select>
+      </label>
+      <label>
+        <span>Estado (existencias actuales)</span>
+        <select [ngModel]="state()" (ngModelChange)="state.set($event)">
+          <option value="">Todos</option>
+          @for (stockState of stockStates; track stockState.value) {
+            <option [value]="stockState.value">{{ stockState.label }}</option>
+          }
+        </select>
+      </label>
+    } @else if (reportId() === 'transfers') {
+      <label>
+        <span>Tipo de transferencia</span>
+        <select [ngModel]="type()" (ngModelChange)="type.set($event)">
+          <option value="">Todos los tipos</option>
+          @for (transferType of transferTypes; track transferType.value) {
+            <option [value]="transferType.value">{{ transferType.label }}</option>
+          }
+        </select>
+      </label>
+    } @else if (reportId() === 'tasks') {
+      <label>
+        <span>Tipo de tarea</span>
+        <select [ngModel]="type()" (ngModelChange)="type.set($event)">
+          <option value="">Todos los tipos</option>
+          @for (taskType of taskTypes; track taskType) {
+            <option [value]="taskType">{{ taskType }}</option>
+          }
+        </select>
+      </label>
+    } @else if (reportId() === 'tickets') {
+      <label>
+        <span>Estado</span>
+        <select [ngModel]="state()" (ngModelChange)="state.set($event)">
+          <option value="">Todos los estados</option>
+          @for (ticketState of ticketStates; track ticketState) {
+            <option [value]="ticketState">{{ ticketState }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Categoría</span>
+        <select [ngModel]="category()" (ngModelChange)="category.set($event)">
+          <option value="">Todas las categorías</option>
+          @for (ticketCategory of ticketCategories; track ticketCategory) {
+            <option [value]="ticketCategory">{{ ticketCategory }}</option>
+          }
+        </select>
+      </label>
+    } @else if (reportId() === 'activity') {
+      <label>
+        <span>Módulo</span>
+        <input
+          type="search"
+          [ngModel]="module()"
+          (ngModelChange)="module.set($event)"
+          placeholder="Entidad o módulo"
+        />
+      </label>
+      <label>
+        <span>Acción</span>
+        <input
+          type="search"
+          [ngModel]="action()"
+          (ngModelChange)="action.set($event)"
+          placeholder="Acción registrada"
+        />
+      </label>
+    }
+
+    @if (reportId() !== 'inventory') {
+      <label>
+        <span>Orden</span>
+        <select [ngModel]="sort()" (ngModelChange)="sort.set($event)">
+          <option value="newest">Más recientes</option>
+          <option value="oldest">Más antiguas</option>
+        </select>
+      </label>
+    }
+
+    <div class="report-filter-actions">
+      <button type="button" class="secondary-button" [disabled]="loading()" (click)="limpiarFiltros()">
+        Limpiar filtros
+      </button>
+      <button type="button" class="primary-button" [disabled]="loading()" (click)="aplicarFiltros()">
+        Consultar
+      </button>
+    </div>
+  </section>
+
+  @if (error()) {
+    <p class="report-error" role="alert">{{ error() }}</p>
+  }
+  @if (preview() && !previewMatchesFilters()) {
+    <p class="report-note">Cambiaste los filtros o el tipo de reporte. Consultá para actualizar la vista previa antes de exportar.</p>
+  }
+  @if (reportId() === 'stock' && (from() || to())) {
+    <p class="report-note">El período filtra los movimientos; las existencias actuales no tienen fecha de corte histórica.</p>
+  }
+  @if (reportId() === 'inventory' && (from() || to())) {
+    <p class="report-note">El período solo puede aplicarse a activos que tienen fecha registrada; los demás no se muestran mientras el filtro esté activo.</p>
+  }
+  @if (reportId() === 'stock' && state()) {
+    <p class="report-note">Al filtrar por estado se muestran existencias actuales; los movimientos históricos no tienen un estado de saldo asociado.</p>
+  }
+  @if (reportId() === 'transfers') {
+    <p class="report-note">El informe combina transferencias de activos y envíos de stock. La cantidad solo está registrada para los envíos de stock; al filtrar por área se excluyen esos envíos porque no almacenan un área.</p>
+  }
+  @if (reportId() === 'activity') {
+    <p class="report-note">Solo se muestran eventos almacenados en auditoría o en el historial disponible del inventario; no se reconstruyen acciones antiguas ausentes.</p>
+  }
+
+  <section class="report-results" aria-live="polite">
+    <header>
+      <div>
+        <h3>{{ preview()?.title ?? 'Vista previa' }}</h3>
+        @if (preview(); as result) {
+          <p>
+            {{ result.total }} resultados · página {{ result.page }} de {{ totalPages() }} · generado
+            {{ result.generatedAt | date: 'dd/MM/yyyy HH:mm' }}
+          </p>
+        }
+      </div>
+    </header>
+
+    @if (loading()) {
+      <p class="report-empty" role="status">Consultando datos del servidor…</p>
+    } @else if (preview(); as result) {
+      @if (result.criteria.length > 0) {
+        <div class="criteria-list">
+          <strong>Filtros aplicados:</strong>
+          @for (criterion of result.criteria; track criterion.label) {
+            <span>{{ criterion.label }}: {{ criterion.value }}</span>
+          }
+        </div>
+      } @else {
+        <p class="report-note">Sin filtros adicionales.</p>
+      }
+
+      @if (result.items.length === 0) {
+        <p class="report-empty">No hay resultados para los filtros seleccionados.</p>
+      } @else {
+        <div class="report-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                @for (column of result.columns; track column.key) {
+                  <th>{{ column.label }}</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of result.items; track $index) {
+                <tr>
+                  @for (column of result.columns; track column.key) {
+                    <td>{{ valorCelda(row, column.key) }}</td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      @if (result.total > pageSize) {
+        <nav class="report-pagination" aria-label="Paginación del reporte">
+          <button type="button" class="secondary-button" [disabled]="page() <= 1" (click)="paginaAnterior()">
+            Anterior
+          </button>
+          <span>Página {{ page() }} de {{ totalPages() }}</span>
+          <button type="button" class="secondary-button" [disabled]="page() >= totalPages()" (click)="paginaSiguiente()">
+            Siguiente
+          </button>
+        </nav>
+      }
+      <p class="report-note">
+        La vista previa muestra una página. Excel y la impresión para PDF incluyen todos los
+        resultados del filtro actual.
+      </p>
+    }
+  </section>
+</section>

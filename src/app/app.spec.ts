@@ -15,7 +15,10 @@ describe('App', () => {
     httpMock = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => httpMock.verify());
+  afterEach(() => {
+    httpMock.verify();
+    vi.restoreAllMocks();
+  });
 
   function createApp() {
     const fixture = TestBed.createComponent(App);
@@ -96,6 +99,7 @@ describe('App', () => {
   it('adds a manually surveyed peripheral to the selected workstation without using stock', async () => {
     const fixture = createApp();
     const app = fixture.componentInstance;
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     vi.spyOn(app.inventoryService, 'guardarEnServidor').mockResolvedValue();
     app.inventoryService.pisos.set([{ id: 'piso-central', nombre: 'Planta baja', nivel: 0 }]);
     app.inventoryService.areas.set([{ id: 'area-1', pisoId: 'piso-central', nombre: 'Sistemas' }]);

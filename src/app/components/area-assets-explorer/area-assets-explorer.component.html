@@ -44,6 +44,45 @@
   } @else if (areasDelPiso().length === 0) {
     <p class="explorer-feedback">Este piso todavía no tiene áreas registradas.</p>
   } @else if (areaSeleccionada()) {
+    <div class="explorer-filters asset-search-filters" aria-label="Buscar activos del área">
+      <label>
+        <span>Buscar activos</span>
+        <input
+          type="search"
+          [ngModel]="busquedaActivos()"
+          (ngModelChange)="busquedaActivos.set($event); reiniciarPaginas()"
+          placeholder="Puesto, usuario, marca, modelo o serie"
+        />
+      </label>
+      <label>
+        <span>Tipo de componente</span>
+        <select
+          [ngModel]="tipoComponente()"
+          (ngModelChange)="tipoComponente.set($event); reiniciarPaginas()"
+        >
+          <option value="">Todos los componentes</option>
+          @for (tipo of tiposComponenteDisponibles(); track tipo) {
+            <option [value]="tipo">{{ tipo }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>Tipo de equipo de red</span>
+        <select
+          [ngModel]="tipoEquipoRed()"
+          (ngModelChange)="tipoEquipoRed.set($event); reiniciarPaginas()"
+        >
+          <option value="">Todos los equipos</option>
+          @for (tipo of tiposRedDisponibles(); track tipo) {
+            <option [value]="tipo">{{ tipo }}</option>
+          }
+        </select>
+      </label>
+      <span class="asset-count">{{ cantidadEquipos() }} resultados</span>
+      <button type="button" class="secondary-button" (click)="limpiarFiltrosActivos()">
+        Limpiar filtros
+      </button>
+    </div>
     <div class="area-overview">
       <h4>{{ areaSeleccionada()?.nombre }}</h4>
       <div class="asset-groups">
@@ -52,7 +91,7 @@
             <h4>Puestos de trabajo</h4>
             <span>{{ puestosDelArea().length }}</span>
           </header>
-          @for (puesto of puestosDelArea(); track puesto.id) {
+          @for (puesto of puestosPaginados(); track puesto.id) {
             <article class="asset-card">
               <div>
                 <strong>{{ puesto.nombrePuesto }}</strong>
@@ -77,6 +116,27 @@
           } @empty {
             <p class="asset-empty">No hay puestos asignados a esta área.</p>
           }
+          @if (puestosDelArea().length > resultadosPorPagina) {
+            <nav class="asset-pagination" aria-label="Paginación de puestos del área">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaPuestos() <= 1"
+                (click)="paginaPuestos.update((page) => page - 1)"
+              >
+                Anterior
+              </button>
+              <span>{{ paginaPuestos() }} / {{ paginasPuestos() }}</span>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaPuestos() >= paginasPuestos()"
+                (click)="paginaPuestos.update((page) => page + 1)"
+              >
+                Siguiente
+              </button>
+            </nav>
+          }
         </section>
 
         <section class="asset-group">
@@ -84,7 +144,7 @@
             <h4>Equipos de red</h4>
             <span>{{ equiposRedDelArea().length }}</span>
           </header>
-          @for (equipo of equiposRedDelArea(); track equipo.id) {
+          @for (equipo of equiposRedPaginados(); track equipo.id) {
             <article class="asset-card">
               <div>
                 <strong>{{ equipo.tipo }} · {{ equipo.marca }}</strong>
@@ -95,6 +155,27 @@
           } @empty {
             <p class="asset-empty">No hay equipos de red asignados a esta área.</p>
           }
+          @if (equiposRedDelArea().length > resultadosPorPagina) {
+            <nav class="asset-pagination" aria-label="Paginación de equipos de red del área">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaEquiposRed() <= 1"
+                (click)="paginaEquiposRed.update((page) => page - 1)"
+              >
+                Anterior
+              </button>
+              <span>{{ paginaEquiposRed() }} / {{ paginasEquiposRed() }}</span>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paginaEquiposRed() >= paginasEquiposRed()"
+                (click)="paginaEquiposRed.update((page) => page + 1)"
+              >
+                Siguiente
+              </button>
+            </nav>
+          }
         </section>
       </div>
     </div>
@@ -103,14 +184,79 @@
       <header>
         <div>
           <h4 id="area-ticket-history-title">Historial de reclamos</h4>
-          <p>Solicitudes de soporte registradas para esta área.</p>
+          <p>{{ totalTickets() }} resultados; página {{ paginaTickets() }} de {{ totalPaginasTickets() }}.</p>
         </div>
-        <span>{{ tickets().length }} reclamos</span>
+        <span>{{ tickets().length }} en esta página</span>
       </header>
+      <div class="explorer-filters ticket-history-filters" aria-label="Filtros de reclamos del área">
+        <label>
+          <span>Buscar</span>
+          <input
+            type="search"
+            [ngModel]="filtroTicketsTexto()"
+            (ngModelChange)="filtroTicketsTexto.set($event)"
+            placeholder="Asunto, detalle o elemento"
+          />
+        </label>
+        <label>
+          <span>Estado</span>
+          <select
+            [ngModel]="filtroTicketsEstado()"
+            (ngModelChange)="filtroTicketsEstado.set($event)"
+          >
+            <option value="">Todos los estados</option>
+            @for (estado of estadosTickets; track estado) {
+              <option [value]="estado">{{ estado }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Categoría</span>
+          <select
+            [ngModel]="filtroTicketsCategoria()"
+            (ngModelChange)="filtroTicketsCategoria.set($event)"
+          >
+            <option value="">Todas las categorías</option>
+            @for (categoria of categoriasTickets; track categoria) {
+              <option [value]="categoria">{{ categoria }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Solicitante</span>
+          <input
+            type="search"
+            [ngModel]="filtroTicketsResponsable()"
+            (ngModelChange)="filtroTicketsResponsable.set($event)"
+            placeholder="Usuario"
+          />
+        </label>
+        <label>
+          <span>Desde</span>
+          <input type="date" [ngModel]="ticketsDesde()" (ngModelChange)="ticketsDesde.set($event)" />
+        </label>
+        <label>
+          <span>Hasta</span>
+          <input type="date" [ngModel]="ticketsHasta()" (ngModelChange)="ticketsHasta.set($event)" />
+        </label>
+        <label>
+          <span>Orden</span>
+          <select [ngModel]="ordenTickets()" (ngModelChange)="ordenTickets.set($event)">
+            <option value="newest">Más recientes</option>
+            <option value="oldest">Más antiguas</option>
+          </select>
+        </label>
+        <button type="button" class="secondary-button" [disabled]="loadingTickets()" (click)="limpiarFiltrosTickets()">
+          Limpiar
+        </button>
+        <button type="button" class="secondary-button" [disabled]="loadingTickets()" (click)="aplicarFiltrosTickets()">
+          Aplicar filtros
+        </button>
+      </div>
       @if (loadingTickets()) {
         <p class="explorer-feedback" role="status">Cargando reclamos del área…</p>
       } @else if (tickets().length === 0) {
-        <p class="explorer-feedback">Esta área todavía no tiene reclamos.</p>
+        <p class="explorer-feedback">No hay reclamos para los filtros seleccionados.</p>
       } @else {
         <ol class="ticket-history-list">
           @for (ticket of tickets(); track ticket.id) {
@@ -127,6 +273,27 @@
             </li>
           }
         </ol>
+        @if (totalTickets() > ticketsPorPagina) {
+          <nav class="asset-pagination" aria-label="Paginación del historial de reclamos">
+            <button
+              type="button"
+              class="secondary-button"
+              [disabled]="loadingTickets() || paginaTickets() <= 1"
+              (click)="paginaTicketsAnterior()"
+            >
+              Anterior
+            </button>
+            <span>Página {{ paginaTickets() }} de {{ totalPaginasTickets() }}</span>
+            <button
+              type="button"
+              class="secondary-button"
+              [disabled]="loadingTickets() || paginaTickets() >= totalPaginasTickets()"
+              (click)="paginaTicketsSiguiente()"
+            >
+              Siguiente
+            </button>
+          </nav>
+        }
       }
     </section>
   }

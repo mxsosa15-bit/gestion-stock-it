@@ -10,11 +10,21 @@ export interface NewLocation {
   direccion: string;
 }
 
+export type DashboardLocation = Pick<Sede, 'id' | 'nombre' | 'tipo'>;
+
 @Injectable({ providedIn: 'root' })
 export class LocationsService {
   private readonly http = inject(HttpClient);
   readonly sedes = signal<Sede[]>([]);
   readonly error = signal('');
+
+  async listarParaDashboard(): Promise<DashboardLocation[]> {
+    try {
+      return await firstValueFrom(this.http.get<DashboardLocation[]>('/api/sedes/dashboard'));
+    } catch (error: unknown) {
+      throw new Error(this.getErrorMessage(error, 'No se pudieron cargar las sedes.'));
+    }
+  }
 
   async cargar(): Promise<void> {
     try {
@@ -42,6 +52,29 @@ export class LocationsService {
       return sede;
     } catch (error: unknown) {
       const message = this.getErrorMessage(error, 'No se pudo crear la sede.');
+      this.error.set(message);
+      throw new Error(message);
+    }
+  }
+
+  async actualizar(id: string, location: NewLocation): Promise<Sede> {
+    try {
+      const sede = await firstValueFrom(
+        this.http.patch<Sede>(`/api/sedes/${encodeURIComponent(id)}`, location),
+      );
+      this.sedes.update((sedes) =>
+        sedes
+          .map((item) => (item.id === id ? sede : item))
+          .sort(
+            (left, right) =>
+              Number(right.tipo === 'CENTRAL') - Number(left.tipo === 'CENTRAL') ||
+              left.nombre.localeCompare(right.nombre),
+          ),
+      );
+      this.error.set('');
+      return sede;
+    } catch (error: unknown) {
+      const message = this.getErrorMessage(error, 'No se pudo actualizar la sede.');
       this.error.set(message);
       throw new Error(message);
     }

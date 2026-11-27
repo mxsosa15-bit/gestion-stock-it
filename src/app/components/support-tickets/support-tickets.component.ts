@@ -4,7 +4,6 @@ import {
   Component,
   computed,
   inject,
-  input,
   OnDestroy,
   OnInit,
   PLATFORM_ID,
@@ -15,6 +14,8 @@ import { AuthService } from '../../services/auth.service';
 import {
   AffectedWorkstation,
   SupportTicket,
+  TicketDetailsInput,
+  TicketFilters,
   TicketState,
   TicketsService,
   WorkshopTransferInput,
@@ -36,13 +37,13 @@ const TICKET_STATES: readonly TicketState[] = ['Abierto', 'En proceso', 'Termina
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SupportTicketsComponent implements OnInit, OnDestroy {
+  private requestSequence = 0;
   private readonly ticketsService = inject(TicketsService);
   private readonly platformId = inject(PLATFORM_ID);
   private eventSource: EventSource | null = null;
   private toastTimer?: ReturnType<typeof setTimeout>;
 
   readonly authService = inject(AuthService);
-  readonly sedeId = input<string | null>(null);
   readonly loading = signal(false);
   readonly sending = signal(false);
   readonly busyTicketId = signal<string | null>(null);
@@ -65,27 +66,28 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   readonly resolvingTicketId = signal<string | null>(null);
   readonly completedVisible = signal(false);
   readonly tickets = signal<SupportTicket[]>([]);
+  readonly ticketEnEdicionId = signal<string | null>(null);
+  readonly edicionTicket = signal<TicketDetailsInput | null>(null);
   readonly categorias = TICKET_CATEGORIES;
   readonly estados = TICKET_STATES;
   readonly filtroEstado = signal<'Todos' | TicketState>('Todos');
   readonly filtroCategoria = signal<'Todas' | TicketCategory>('Todas');
   readonly fechaDesde = signal('');
   readonly fechaHasta = signal('');
+  readonly filtroTexto = signal('');
+  readonly filtroSede = signal('');
+  readonly filtroArea = signal('');
+  readonly filtroResponsable = signal('');
+  readonly orden = signal<'newest' | 'oldest'>('newest');
+  readonly pagina = signal(1);
+  readonly paginaTamano = 20;
+  readonly totalResultados = signal(0);
+  readonly totalPaginas = computed(() =>
+    Math.max(1, Math.ceil(this.totalResultados() / this.paginaTamano)),
+  );
 
   readonly isRequester = computed(() => this.authService.user()?.role === 'solicitante');
-  readonly filteredTickets = computed(() =>
-    this.tickets().filter((ticket) => {
-      if (this.filtroEstado() !== 'Todos' && ticket.estado !== this.filtroEstado()) return false;
-      if (this.filtroCategoria() !== 'Todas' && ticket.categoria !== this.filtroCategoria()) {
-        return false;
-      }
-      const ticketDate = this.fechaLocal(ticket.fecha_creacion);
-      if (this.fechaDesde() && ticketDate < this.fechaDesde()) return false;
-      if (this.fechaHasta() && ticketDate > this.fechaHasta()) return false;
-      if (this.sedeId() && ticket.sede_id !== this.sedeId()) return false;
-      return true;
-    }),
-  );
+  readonly filteredTickets = computed(() => this.tickets());
   readonly activeTickets = computed(() =>
     this.filteredTickets().filter((ticket) => ticket.estado !== 'Terminado'),
   );
@@ -105,12 +107,19 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   }
 
   async crearReclamo(): Promise<void> {
+    if (this.sending()) return;
     const titulo = this.titulo().trim();
     const descripcion = this.descripcion().trim();
     if (!titulo || !descripcion || !this.puestoAfectadoId()) {
       this.error.set('Completá el asunto, seleccioná el puesto afectado y describí el problema.');
       return;
     }
+    const puesto = this.puestosAfectados().find((item) => item.id === this.puestoAfectadoId());
+    if (
+      !window.confirm(
+        `¿Confirmás enviar este reclamo?\n\nAsunto: ${titulo}\nCategoría: ${this.categoria()}\nPuesto afectado: ${puesto?.nombrePuesto ?? 'No identificado'} · Usuario: ${puesto?.usuarioAsignado ?? 'No identificado'}\nDescripción: ${descripcion}`,
+      )
+    ) return;
     this.error.set('');
     this.notice.set('');
     this.sending.set(true);
@@ -129,11 +138,84 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
       this.descripcion.set('');
       this.categoria.set('Otros');
       this.puestoAfectadoId.set('');
+      await this.cargarTickets(false, 1);
       this.mostrarAviso('El reclamo se envió al equipo de soporte.');
     } catch (error: unknown) {
       this.error.set(error instanceof Error ? error.message : 'No se pudo enviar el reclamo.');
     } finally {
       this.sending.set(false);
+    }
+  }
+
+  iniciarEdicionTicket(ticket: SupportTicket): void {
+    if (!this.isRequester() || ticket.estado !== 'Abierto' || ticket.taller) return;
+    this.ticketEnEdicionId.set(ticket.id);
+    this.edicionTicket.set({
+      titulo: ticket.titulo,
+      descripcion: ticket.descripcion,
+      categoria: ticket.categoria,
+    });
+    this.error.set('');
+  }
+
+  actualizarCampoEdicionTicket(campo: keyof TicketDetailsInput, value: string): void {
+    this.edicionTicket.update((details) => {
+      if (!details) return null;
+      if (campo === 'categoria') {
+        const categoria = this.categorias.find((item) => item === value);
+        return categoria ? { ...details, categoria } : details;
+      }
+      return { ...details, [campo]: value };
+    });
+  }
+
+  cancelarEdicionTicket(): void {
+    if (this.busyTicketId() === this.ticketEnEdicionId()) return;
+    this.ticketEnEdicionId.set(null);
+    this.edicionTicket.set(null);
+    this.error.set('');
+  }
+
+  async guardarEdicionTicket(ticket: SupportTicket): Promise<void> {
+    const details = this.edicionTicket();
+    if (
+      !details ||
+      ticket.id !== this.ticketEnEdicionId() ||
+      !this.isRequester() ||
+      ticket.estado !== 'Abierto' ||
+      ticket.taller ||
+      this.busyTicketId() === ticket.id
+    ) {
+      return;
+    }
+    if (!details.titulo.trim() || !details.descripcion.trim()) {
+      this.error.set('Completá el asunto y el detalle del reclamo.');
+      return;
+    }
+    const resumen = [
+      `Asunto: ${ticket.titulo} → ${details.titulo.trim()}`,
+      `Categoría: ${ticket.categoria} → ${details.categoria}`,
+      `Descripción anterior: ${ticket.descripcion}`,
+      `Descripción nueva: ${details.descripcion.trim()}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás modificar el reclamo ${ticket.id}?\n\n${resumen}`)) return;
+    this.error.set('');
+    this.busyTicketId.set(ticket.id);
+    try {
+      const updated = await this.ticketsService.editarDetalles(ticket.id, {
+        ...details,
+        titulo: details.titulo.trim(),
+        descripcion: details.descripcion.trim(),
+      });
+      this.reemplazarTicket(updated);
+      this.ticketEnEdicionId.set(null);
+      this.edicionTicket.set(null);
+      await this.cargarTickets(false);
+      this.mostrarAviso('Se actualizaron los datos del reclamo.');
+    } catch (error: unknown) {
+      this.error.set(error instanceof Error ? error.message : 'No se pudo editar el reclamo.');
+    } finally {
+      this.busyTicketId.set(null);
     }
   }
 
@@ -193,11 +275,17 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
   }
 
   async enviarAlTaller(ticket: SupportTicket): Promise<void> {
+    if (this.busyTicketId() === ticket.id) return;
     const transfer = this.workshopDrafts()[ticket.id];
     if (!transfer?.equipo.trim() || !transfer.identificacion.trim() || !transfer.detalle.trim()) {
       this.error.set('Completá el equipo, su identificador y el motivo de derivación.');
       return;
     }
+    if (
+      !window.confirm(
+        `¿Confirmás solicitar la derivación al taller?\n\nReclamo: ${ticket.titulo}\nEquipo: ${transfer.equipo.trim()}\nSerie o patrimonio: ${transfer.identificacion.trim()}\nOrigen: ${ticket.sede_nombre ?? 'Sede no identificada'} · ${ticket.area_nombre ?? 'Área no identificada'}\nDestino: Taller de Casa Central\nMotivo: ${transfer.detalle.trim()}\nSe solicitará la aprobación del usuario antes del traslado.`,
+      )
+    ) return;
     this.error.set('');
     this.busyTicketId.set(ticket.id);
     try {
@@ -296,6 +384,20 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
     aprobar: boolean,
     motivo?: string,
   ): Promise<void> {
+    if (this.busyTicketId() === ticket.id) return;
+    const transfer = ticket.taller;
+    if (!transfer) return;
+    const decision = aprobar ? 'aprobar la derivación y autorizar el traslado' : 'rechazar la derivación';
+    if (!aprobar) {
+      const detalle = [
+        `Reclamo: ${ticket.titulo}`,
+        `Equipo: ${transfer.equipo}`,
+        `Serie o patrimonio: ${transfer.identificacion}`,
+        `Acción: ${decision}`,
+        ...(motivo ? [`Motivo del rechazo: ${motivo}`] : []),
+      ].join('\n');
+      if (!window.confirm(`¿Confirmás esta decisión?\n\n${detalle}`)) return;
+    }
     this.error.set('');
     this.busyTicketId.set(ticket.id);
     try {
@@ -306,6 +408,7 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
         motivo,
       );
       this.reemplazarTicket(updated);
+      await this.cargarTickets(false);
       this.workshopDecisionId.set(null);
       this.workshopVerified.update((verified) => ({ ...verified, [transferId]: false }));
       this.mostrarAviso(
@@ -325,11 +428,18 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
     estado: Exclude<TicketState, 'Abierto'>,
     solucion?: string,
   ): Promise<void> {
+    if (this.busyTicketId() === ticket.id) return;
+    if (
+      !window.confirm(
+        `¿Confirmás cambiar el estado del reclamo?\n\nReclamo: ${ticket.titulo}\nEstado actual: ${ticket.estado}\nEstado nuevo: ${estado}${solucion ? `\nSolución: ${solucion}` : ''}`,
+      )
+    ) return;
     this.error.set('');
     this.busyTicketId.set(ticket.id);
     try {
       const actualizado = await this.ticketsService.actualizar(ticket.id, estado, solucion);
       this.reemplazarTicket(actualizado);
+      await this.cargarTickets(false);
       this.resolvingTicketId.set(null);
       this.mostrarAviso(
         estado === 'Terminado' ? 'Reclamo terminado.' : 'Reclamo puesto en proceso.',
@@ -359,11 +469,8 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
 
   private async actualizarDesdeEvento(event: TicketEvent): Promise<void> {
     try {
-      const tickets = this.isRequester()
-        ? await this.ticketsService.listarMios()
-        : await this.ticketsService.listar();
-      this.tickets.set(tickets);
-      const ticket = tickets.find((item) => item.id === event.id);
+      await this.cargarTickets(false);
+      const ticket = this.tickets().find((item) => item.id === event.id);
       if (event.action === 'created' && ticket && !this.isRequester()) {
         this.mostrarAviso(`Nuevo reclamo: ${ticket.categoria} · ${ticket.titulo}`);
       } else if (ticket && this.isRequester() && event.action !== 'created') {
@@ -376,21 +483,71 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async cargarTickets(): Promise<void> {
-    this.loading.set(true);
+  private async cargarTickets(showLoading = true, page = this.pagina()): Promise<void> {
+    const requestSequence = ++this.requestSequence;
+    this.pagina.set(page);
+    if (showLoading) this.loading.set(true);
     this.error.set('');
     try {
-      const tickets = this.isRequester()
-        ? await this.ticketsService.listarMios()
-        : await this.ticketsService.listar();
-      this.tickets.set(tickets);
+      const filters = this.filtrosTickets(page);
+      const result = this.isRequester()
+        ? await this.ticketsService.buscarMios(filters)
+        : await this.ticketsService.buscar(filters);
+      if (requestSequence !== this.requestSequence) return;
+      this.tickets.set(result.items);
+      this.totalResultados.set(result.total);
     } catch (error: unknown) {
-      this.error.set(
-        error instanceof Error ? error.message : 'No se pudieron cargar los reclamos.',
-      );
+      if (requestSequence === this.requestSequence) {
+        this.error.set(
+          error instanceof Error ? error.message : 'No se pudieron cargar los reclamos.',
+        );
+      }
     } finally {
-      this.loading.set(false);
+      if (requestSequence === this.requestSequence) this.loading.set(false);
     }
+  }
+
+  aplicarFiltros(): void {
+    void this.cargarTickets(true, 1);
+  }
+
+  limpiarFiltros(): void {
+    this.filtroTexto.set('');
+    this.filtroSede.set('');
+    this.filtroArea.set('');
+    this.filtroResponsable.set('');
+    this.filtroEstado.set('Todos');
+    this.filtroCategoria.set('Todas');
+    this.fechaDesde.set('');
+    this.fechaHasta.set('');
+    this.orden.set('newest');
+    this.aplicarFiltros();
+  }
+
+  paginaAnterior(): void {
+    if (this.pagina() > 1) void this.cargarTickets(true, this.pagina() - 1);
+  }
+
+  paginaSiguiente(): void {
+    if (this.pagina() < this.totalPaginas()) {
+      void this.cargarTickets(true, this.pagina() + 1);
+    }
+  }
+
+  private filtrosTickets(page: number): TicketFilters {
+    return {
+      search: this.filtroTexto(),
+      site: this.isRequester() ? '' : this.filtroSede(),
+      area: this.isRequester() ? '' : this.filtroArea(),
+      responsible: this.isRequester() ? '' : this.filtroResponsable(),
+      from: this.fechaDesde(),
+      to: this.fechaHasta(),
+      state: this.filtroEstado() === 'Todos' ? '' : this.filtroEstado(),
+      category: this.filtroCategoria() === 'Todas' ? '' : this.filtroCategoria(),
+      sort: this.orden(),
+      page,
+      pageSize: this.paginaTamano,
+    };
   }
 
   private async cargarPuestosAfectados(): Promise<void> {
@@ -428,11 +585,4 @@ export class SupportTicketsComponent implements OnInit, OnDestroy {
     return `"${safeValue.replaceAll('"', '""')}"`;
   }
 
-  private fechaLocal(value: string): string {
-    const date = new Date(value);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
 }

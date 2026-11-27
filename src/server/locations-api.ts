@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import type { Pool } from 'pg';
+import { recordOperatorAuditEvents } from './operator-audit';
 import { requireRoles } from './session-user';
 
 const requireLocationViewer = requireRoles(['admin', 'operator']);
+const requireDashboardLocationViewer = requireRoles(['admin', 'operator', 'dashboard']);
 const requireAdministrator = requireRoles(['admin']);
 
 export interface LocationInput {
@@ -34,6 +36,24 @@ export function parseLocationInput(value: unknown): LocationInput | null {
 
 export function createLocationsApi(pool: Pool): express.Router {
   const router = express.Router();
+
+  router.get(
+    '/sedes/dashboard',
+    requireDashboardLocationViewer,
+    async (_request, response, next) => {
+      try {
+        const result = await pool.query(
+          `SELECT id, nombre, tipo
+         FROM gestion_it.sedes
+         WHERE activa = true
+         ORDER BY (tipo = 'CENTRAL') DESC, nombre`,
+        );
+        response.json(result.rows);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.get('/sedes', requireLocationViewer, async (_request, response, next) => {
     try {
@@ -68,7 +88,19 @@ export function createLocationsApi(pool: Pool): express.Router {
           location.direccion,
         ],
       );
-      response.status(201).json(result.rows[0]);
+        const created = result.rows[0];
+        if (created) {
+          response.locals['operatorAuditContext'] = {
+            entityId: created.id,
+            entityName: created.nombre,
+            details: {
+              tipo: created.tipo,
+              departamento: created.departamento,
+              localidad: created.localidad,
+            },
+          };
+        }
+        response.status(201).json(created);
     } catch (error) {
       if (
         typeof error === 'object' &&
@@ -80,6 +112,101 @@ export function createLocationsApi(pool: Pool): express.Router {
         return;
       }
       next(error);
+    }
+  });
+
+  router.patch('/sedes/:id', requireAdministrator, async (request, response, next) => {
+    const location = parseLocationInput(request.body);
+    if (!location) {
+      response.status(400).json({ error: 'Completá los datos descriptivos de la sede.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const current = await client.query<{
+        id: string;
+        nombre: string;
+        tipo: string;
+        departamento: string;
+        localidad: string;
+        direccion: string;
+        activa: boolean;
+      }>(
+        `SELECT id, nombre, tipo, departamento, localidad, direccion, activa
+         FROM gestion_it.sedes
+         WHERE id = $1 AND activa = true
+         FOR UPDATE`,
+        [request.params['id']],
+      );
+      const previous = current.rows[0];
+      if (!previous) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        response.status(404).json({ error: 'No se encontró la sede activa.' });
+        return;
+      }
+
+      const result = await client.query(
+        `UPDATE gestion_it.sedes
+         SET nombre = $2, departamento = $3, localidad = $4, direccion = $5
+         WHERE id = $1
+         RETURNING id, nombre, tipo, departamento, localidad, direccion, activa`,
+        [
+          previous.id,
+          location.nombre,
+          location.departamento,
+          location.localidad,
+          location.direccion,
+        ],
+      );
+      const updated = result.rows[0];
+      const actor = request.session.user;
+      if (!actor || !updated) throw new Error('No se pudo completar la edición de la sede.');
+      await recordOperatorAuditEvents(client, actor, [
+        {
+          action: 'Actualizó los datos descriptivos de una sede',
+          entityType: 'sede',
+          entityId: updated.id,
+          entityName: updated.nombre,
+          details: {
+            resultado: 'exitoso',
+            anterior: {
+              nombre: previous.nombre,
+              departamento: previous.departamento,
+              localidad: previous.localidad,
+              direccion: previous.direccion,
+            },
+            posterior: {
+              nombre: updated.nombre,
+              departamento: updated.departamento,
+              localidad: updated.localidad,
+              direccion: updated.direccion,
+            },
+          },
+        },
+      ]);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      response.locals['operatorAuditRecordedTransactionally'] = true;
+      response.json(updated);
+    } catch (error) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        response.status(409).json({ error: 'Ya existe una sede con ese nombre.' });
+        return;
+      }
+      next(error);
+    } finally {
+      client.release();
     }
   });
 

@@ -1,6 +1,7 @@
 .tickets-page,
 .ticket-form,
 .resolution-form,
+.ticket-edit-form,
 .filters-panel,
 .ticket-card,
 .workshop-panel {
@@ -110,6 +111,7 @@ p {
 
 .ticket-form,
 .resolution-form,
+.ticket-edit-form,
 .filters-panel,
 .workshop-panel {
   padding: 16px;
@@ -127,6 +129,7 @@ p {
 
 .ticket-form label,
 .resolution-form label,
+.ticket-edit-form label,
 .filters-grid label {
   display: grid;
   gap: 6px;
@@ -140,6 +143,9 @@ p {
 .ticket-form textarea,
 .resolution-form input,
 .resolution-form textarea,
+.ticket-edit-form input,
+.ticket-edit-form select,
+.ticket-edit-form textarea,
 .filters-grid select,
 .filters-grid input {
   width: 100%;
@@ -153,7 +159,8 @@ p {
 }
 
 .ticket-form textarea,
-.resolution-form textarea {
+.resolution-form textarea,
+.ticket-edit-form textarea {
   resize: vertical;
 }
 
@@ -199,6 +206,22 @@ p {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.filter-actions,
+.ticket-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.ticket-pagination {
+  justify-content: center;
+  color: #687087;
+  font-size: 12px;
 }
 
 .ticket-list,

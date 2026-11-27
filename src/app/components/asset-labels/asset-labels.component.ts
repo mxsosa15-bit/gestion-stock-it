@@ -14,6 +14,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import {
   HardwareAsset,
+  HardwareAssetEdit,
   HardwareAssetInput,
   HardwareAssetsService,
   HardwareType,
@@ -45,6 +46,8 @@ export class AssetLabelsComponent implements OnInit {
   readonly filter = signal('');
   readonly selectedIds = signal<Set<string>>(new Set());
   readonly patrimonyDrafts = signal<Record<string, string>>({});
+  readonly editingAssetId = signal<string | null>(null);
+  readonly assetEditDraft = signal<HardwareAssetEdit | null>(null);
   readonly newAsset = signal({
     tipo: 'MONITOR' as HardwareType,
     marca: '',
@@ -115,6 +118,79 @@ export class AssetLabelsComponent implements OnInit {
     this.patrimonyDrafts.update((drafts) => ({ ...drafts, [asset.id]: input.value }));
   }
 
+  iniciarEdicion(asset: HardwareAsset): void {
+    this.editingAssetId.set(asset.id);
+    this.assetEditDraft.set({
+      tipo: asset.tipo,
+      marca: asset.marca,
+      modelo: asset.modelo,
+      especificacion: asset.especificacion,
+    });
+    this.error.set('');
+  }
+
+  actualizarCampoEdicion(
+    campo: keyof HardwareAssetEdit,
+    value: HardwareAssetEdit[keyof HardwareAssetEdit],
+  ): void {
+    this.assetEditDraft.update((draft) => {
+      if (!draft) return null;
+      if (campo === 'tipo') {
+        const tipo =
+          typeof value === 'string' ? this.types.find((type) => type === value) : undefined;
+        return tipo ? { ...draft, tipo } : draft;
+      }
+      if (campo === 'marca') {
+        return typeof value === 'string' ? { ...draft, marca: value } : draft;
+      }
+      if (campo === 'modelo') {
+        return typeof value === 'string' || value === null
+          ? { ...draft, modelo: value }
+          : draft;
+      }
+      return typeof value === 'string' || value === null
+        ? { ...draft, especificacion: value }
+        : draft;
+    });
+  }
+
+  cancelarEdicion(): void {
+    if (this.saving()) return;
+    this.editingAssetId.set(null);
+    this.assetEditDraft.set(null);
+  }
+
+  async guardarEdicion(asset: HardwareAsset): Promise<void> {
+    if (this.saving() || this.importing()) return;
+    const draft = this.assetEditDraft();
+    if (!draft || this.editingAssetId() !== asset.id) return;
+    const changes: HardwareAssetEdit = {
+      tipo: draft.tipo,
+      marca: draft.marca.trim(),
+      modelo: draft.modelo?.trim() || null,
+      especificacion: draft.especificacion?.trim() || null,
+    };
+    if (!changes.marca) {
+      this.error.set('La marca es obligatoria.');
+      return;
+    }
+    const resumen = [
+      `Equipo: ${asset.tipo} · ${asset.marca} ${asset.modelo ?? ''} · serie ${asset.numeroSerie}`,
+      `Tipo: ${asset.tipo} → ${changes.tipo}`,
+      `Marca: ${asset.marca} → ${changes.marca}`,
+      `Modelo: ${asset.modelo ?? 'Sin modelo'} → ${changes.modelo ?? 'Sin modelo'}`,
+      `Especificación: ${asset.especificacion ?? 'Sin especificación'} → ${changes.especificacion ?? 'Sin especificación'}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás modificar los datos del equipo?\n\n${resumen}`)) return;
+    await this.withSaving(async () => {
+      const updated = await this.hardwareService.editar(asset.id, changes);
+      this.assets.update((assets) => assets.map((item) => (item.id === asset.id ? updated : item)));
+      this.editingAssetId.set(null);
+      this.assetEditDraft.set(null);
+      this.notice.set('Se actualizaron los datos del equipo y quedó registrada la auditoría.');
+    });
+  }
+
   seleccionar(asset: HardwareAsset, event: Event): void {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
@@ -127,6 +203,7 @@ export class AssetLabelsComponent implements OnInit {
   }
 
   async registrarEquipo(): Promise<void> {
+    if (this.saving() || this.importing()) return;
     const form = this.newAsset();
     const numeroSerie = form.numeroSerie.trim();
     const marca = form.marca.trim();
@@ -134,6 +211,11 @@ export class AssetLabelsComponent implements OnInit {
       this.error.set('Completá la marca y el número de serie del equipo.');
       return;
     }
+    if (
+      !window.confirm(
+        `¿Confirmás registrar este equipo patrimonial?\n\nTipo: ${form.tipo}\nMarca: ${marca}\nModelo: ${form.modelo.trim() || 'Sin modelo'}\nNúmero de serie: ${numeroSerie}\nNúmero patrimonial: ${form.numeroPatrimonio.trim() || 'Pendiente'}\nSede: ${this.sedeNombre()}`,
+      )
+    ) return;
 
     await this.withSaving(async () => {
       const created = await this.hardwareService.crear({
@@ -159,7 +241,7 @@ export class AssetLabelsComponent implements OnInit {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
     const file = input.files?.[0];
-    if (!file) return;
+    if (!file || this.importing() || this.saving()) return;
     this.error.set('');
     this.notice.set('');
     this.importing.set(true);
@@ -169,6 +251,17 @@ export class AssetLabelsComponent implements OnInit {
         this.error.set(parsed.errors.join(' '));
         return;
       }
+      const preview = parsed.assets
+        .slice(0, 5)
+        .map((asset) => `${asset.tipo} · ${asset.marca} · serie ${asset.numeroSerie}`);
+      if (parsed.assets.length > preview.length) {
+        preview.push(`y ${parsed.assets.length - preview.length} equipos más`);
+      }
+      if (
+        !window.confirm(
+          `¿Confirmás importar equipos desde "${file.name}"?\n\nSede: ${this.sedeNombre()}\nRegistros válidos del archivo: ${parsed.assets.length}\n${preview.join('\n') || 'No se encontraron registros.'}`,
+        )
+      ) return;
       const imported = await this.hardwareService.importar(
         parsed.assets.map((asset) => ({ ...asset, sedeId: this.sedeId() })),
       );
@@ -185,10 +278,21 @@ export class AssetLabelsComponent implements OnInit {
   }
 
   async guardarPatrimonio(asset: HardwareAsset): Promise<void> {
+    if (this.saving() || this.importing()) return;
     const draft = this.patrimonyDrafts()[asset.id];
     if (draft === undefined) return;
+    const numeroPatrimonio = draft.trim() || null;
+    if (
+      !window.confirm(
+        numeroPatrimonio
+          ? `¿Confirmás modificar el número patrimonial del equipo?\n\nSerie: ${asset.numeroSerie}\nNúmero patrimonial: ${asset.numeroPatrimonio ?? 'Sin etiqueta'} → ${numeroPatrimonio}`
+          : `¿Confirmás quitar el número patrimonial del equipo?\n\nSerie: ${asset.numeroSerie}\nNúmero patrimonial: ${asset.numeroPatrimonio ?? 'Sin etiqueta'} → Sin etiqueta`,
+      )
+    ) {
+      return;
+    }
     await this.withSaving(async () => {
-      const updated = await this.hardwareService.guardarPatrimonio(asset.id, draft.trim() || null);
+      const updated = await this.hardwareService.guardarPatrimonio(asset.id, numeroPatrimonio);
       this.assets.update((assets) => assets.map((item) => (item.id === asset.id ? updated : item)));
       this.patrimonyDrafts.update((drafts) => {
         const { [asset.id]: _savedDraft, ...remaining } = drafts;
@@ -247,6 +351,7 @@ export class AssetLabelsComponent implements OnInit {
   }
 
   private async withSaving(operation: () => Promise<void>): Promise<void> {
+    if (this.saving()) return;
     this.error.set('');
     this.notice.set('');
     this.saving.set(true);

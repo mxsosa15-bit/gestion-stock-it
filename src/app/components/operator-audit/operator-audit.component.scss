@@ -5,7 +5,7 @@
 
 .audit-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
   gap: 12px;
   padding: 18px;
@@ -31,6 +31,23 @@
   border-radius: 7px;
   color: var(--ink);
   background: #fff;
+}
+
+.audit-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .audit-summary {
@@ -116,6 +133,13 @@
 .audit-table-wrap th {
   color: var(--muted);
   background: #f8f9fc;
+}
+
+.audit-table-wrap td.audit-event-details {
+  min-width: 260px;
+  max-width: 480px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .audit-loading,

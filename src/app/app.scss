@@ -599,6 +599,23 @@ select:disabled {
   white-space: nowrap;
 }
 
+.stock-filter-panel,
+.network-filter-panel,
+.activity-filter-panel {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  color: #778198;
+  font-size: 11px;
+}
+
 .section-heading h3,
 .panel-heading h3 {
   margin: 0;
@@ -1762,6 +1779,51 @@ select:disabled {
   color: #78849a;
   font-size: 10px;
   line-height: 1.55;
+}
+
+.conflict-backdrop {
+  z-index: 130;
+}
+
+.conflict-dialog {
+  width: min(100%, 620px);
+}
+
+.conflict-dialog h2 {
+  margin: 11px 0 5px;
+  color: #505d75;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.conflict-dialog > p {
+  color: #78849a;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.conflict-upload {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  color: #59667e;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.conflict-upload input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #dfe5ed;
+  border-radius: 4px;
+  font: inherit;
 }
 
 .confirmation-icon {

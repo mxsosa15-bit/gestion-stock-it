@@ -13,7 +13,10 @@ import {
   SolicitudTransferenciaInventario,
   TransferenciaInventario,
 } from '../../models/inventory.model';
-import { InventoryService } from '../../services/inventory.service';
+import {
+  InventoryService,
+  InventoryTransferFilters,
+} from '../../services/inventory.service';
 
 const CREATE_WORKSTATION = '__crear_puesto__';
 
@@ -25,6 +28,7 @@ const CREATE_WORKSTATION = '__crear_puesto__';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class InventoryTransfersComponent implements OnInit {
+  private requestSequence = 0;
   readonly inventory = inject(InventoryService);
   readonly origenAreaId = signal('');
   readonly destinoAreaId = signal('');
@@ -41,6 +45,21 @@ export class InventoryTransfersComponent implements OnInit {
   readonly error = signal('');
   readonly aviso = signal('');
   readonly historial = signal<TransferenciaInventario[]>([]);
+  readonly totalHistorial = signal(0);
+  readonly busquedaHistorial = signal('');
+  readonly filtroSede = signal('');
+  readonly filtroArea = signal('');
+  readonly filtroOperador = signal('');
+  readonly fechaDesde = signal('');
+  readonly fechaHasta = signal('');
+  readonly filtroTipo = signal('');
+  readonly orden = signal<'newest' | 'oldest'>('newest');
+  readonly pagina = signal(1);
+  readonly paginaTamano = 25;
+  readonly tiposEntidad = ['AREA', 'PERSONA', 'COMPONENTE', 'EQUIPO_RED'] as const;
+  readonly totalPaginas = computed(() =>
+    Math.max(1, Math.ceil(this.totalHistorial() / this.paginaTamano)),
+  );
 
   readonly areasOrigen = computed(() => this.inventory.areas());
   readonly areasDestino = computed(() =>
@@ -183,7 +202,50 @@ export class InventoryTransfersComponent implements OnInit {
     }
   }
 
+  private confirmarTransferencia(request: SolicitudTransferenciaInventario): boolean {
+    const origen = this.areaOrigen()?.nombre ?? this.textoArea(request.origenAreaId);
+    const destino = request.moverAreaCompleta
+      ? `Piso ${this.textoPiso(request.destinoPisoId)}`
+      : (this.areaDestino()?.nombre ?? this.textoArea(request.destinoAreaId));
+    const resumen = [`Origen: ${origen}`, `Destino: ${destino}`];
+
+    if (request.moverAreaCompleta) {
+      resumen.push(
+        `Contenido: toda el área (${this.personasOrigen().length} personas, ${this.puestosOrigen().reduce((total, puesto) => total + puesto.componentes.length, 0)} componentes y ${this.redesOrigen().length} equipos de red)`,
+      );
+    } else {
+      const personas = request.personaIds
+        .map((id) => this.inventory.personas().find((persona) => persona.id === id)?.nombre)
+        .filter((nombre): nombre is string => Boolean(nombre));
+      const componentes = request.componentes.map(({ puestoId, componenteId }) => {
+        const encontrado = this.componentesDisponibles().find(
+          (item) => item.puestoId === puestoId && item.componente.id === componenteId,
+        );
+        return encontrado
+          ? `${encontrado.componente.tipo} ${encontrado.componente.marca} (${encontrado.puestoNombre})`
+          : componenteId;
+      });
+      const equiposRed = request.equipoRedIds.map((id) => {
+        const equipo = this.inventory.equiposRed().find((item) => item.id === id);
+        return equipo ? `${equipo.tipo} ${equipo.marca} ${equipo.modelo}` : id;
+      });
+      const elementos = [...personas, ...componentes, ...equiposRed];
+      resumen.push(`Elementos (${elementos.length}): ${elementos.join(', ') || 'Sin elementos'}`);
+      if (request.nuevoPuesto) {
+        resumen.push(`Puesto nuevo en destino: ${request.nuevoPuesto.nombrePuesto}`);
+      } else if (request.destinoPuestoId) {
+        resumen.push(
+          `Puesto de destino: ${this.inventory.puestos().find((puesto) => puesto.id === request.destinoPuestoId)?.nombrePuesto ?? request.destinoPuestoId}`,
+        );
+      }
+    }
+
+    resumen.push(`Motivo: ${request.descripcion}`);
+    return window.confirm(`¿Confirmás ejecutar esta transferencia?\n\n${resumen.join('\n')}`);
+  }
+
   async ejecutarTransferencia(): Promise<void> {
+    if (this.guardando()) return;
     this.error.set('');
     this.aviso.set('');
     const descripcion = this.descripcion().trim();
@@ -252,6 +314,7 @@ export class InventoryTransfersComponent implements OnInit {
       };
     }
 
+    if (!this.confirmarTransferencia(request)) return;
     this.guardando.set(true);
     try {
       await this.inventory.ejecutarTransferencia(request);
@@ -261,7 +324,7 @@ export class InventoryTransfersComponent implements OnInit {
       this.destinoPuestoId.set('');
       this.nuevoPuestoNombre.set('');
       this.destinoPisoId.set('');
-      await this.cargarHistorial();
+      await this.cargarHistorial(1);
     } catch (error: unknown) {
       this.error.set(
         error instanceof Error ? error.message : 'No se pudo completar la transferencia.',
@@ -295,20 +358,67 @@ export class InventoryTransfersComponent implements OnInit {
   }
 
   async recargarHistorial(): Promise<void> {
-    await this.cargarHistorial();
+    await this.cargarHistorial(this.pagina());
   }
 
-  private async cargarHistorial(): Promise<void> {
+  async cargarHistorial(page = 1): Promise<void> {
+    const requestSequence = ++this.requestSequence;
     this.cargandoHistorial.set(true);
+    this.error.set('');
     try {
-      this.historial.set(await this.inventory.listarTransferencias());
+      const filters: InventoryTransferFilters = {
+        search: this.busquedaHistorial(),
+        site: this.filtroSede(),
+        area: this.filtroArea(),
+        operator: this.filtroOperador(),
+        from: this.fechaDesde(),
+        to: this.fechaHasta(),
+        type: this.filtroTipo(),
+        sort: this.orden(),
+        page,
+        pageSize: this.paginaTamano,
+      };
+      const result = await this.inventory.listarTransferencias(filters);
+      if (requestSequence === this.requestSequence) {
+        this.historial.set(result.items);
+        this.totalHistorial.set(result.total);
+        this.pagina.set(page);
+      }
     } catch (error: unknown) {
-      this.error.set(
-        error instanceof Error ? error.message : 'No se pudo cargar el historial de transferencias.',
-      );
+      if (requestSequence === this.requestSequence) {
+        this.error.set(
+          error instanceof Error
+            ? error.message
+            : 'No se pudo cargar el historial de transferencias.',
+        );
+      }
     } finally {
-      this.cargandoHistorial.set(false);
+      if (requestSequence === this.requestSequence) this.cargandoHistorial.set(false);
     }
+  }
+
+  aplicarFiltros(): void {
+    void this.cargarHistorial(1);
+  }
+
+  limpiarFiltros(): void {
+    this.busquedaHistorial.set('');
+    this.filtroSede.set('');
+    this.filtroArea.set('');
+    this.filtroOperador.set('');
+    this.fechaDesde.set('');
+    this.fechaHasta.set('');
+    this.filtroTipo.set('');
+    this.orden.set('newest');
+    this.aplicarFiltros();
+  }
+
+  paginaAnterior(): void {
+    if (this.pagina() > 1) void this.cargarHistorial(this.pagina() - 1);
+  }
+
+  paginaSiguiente(): void {
+    if (this.pagina() < this.totalPaginas()) void this.cargarHistorial(this.pagina() + 1);
   }
 
   private limpiarSeleccion(): void {

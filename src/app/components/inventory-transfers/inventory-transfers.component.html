@@ -296,10 +296,83 @@
       </div>
       <button type="button" class="refresh-button" (click)="recargarHistorial()">Actualizar</button>
     </header>
+    <section class="history-filters" aria-label="Filtros de transferencias">
+      <label>
+        Buscar
+        <input
+          type="search"
+          [ngModel]="busquedaHistorial()"
+          (ngModelChange)="busquedaHistorial.set($event)"
+          placeholder="Motivo, entidad o identificador"
+        />
+      </label>
+      <label>
+        Sede o delegación
+        <input
+          type="search"
+          [ngModel]="filtroSede()"
+          (ngModelChange)="filtroSede.set($event)"
+          placeholder="Nombre de la sede"
+        />
+      </label>
+      <label>
+        Área o sector
+        <input
+          type="search"
+          [ngModel]="filtroArea()"
+          (ngModelChange)="filtroArea.set($event)"
+          placeholder="Nombre del área"
+        />
+      </label>
+      <label>
+        Operador
+        <input
+          type="search"
+          [ngModel]="filtroOperador()"
+          (ngModelChange)="filtroOperador.set($event)"
+          placeholder="Usuario que registró"
+        />
+      </label>
+      <label>
+        Desde
+        <input type="date" [ngModel]="fechaDesde()" (ngModelChange)="fechaDesde.set($event)" />
+      </label>
+      <label>
+        Hasta
+        <input type="date" [ngModel]="fechaHasta()" (ngModelChange)="fechaHasta.set($event)" />
+      </label>
+      <label>
+        Tipo de movimiento
+        <select [ngModel]="filtroTipo()" (ngModelChange)="filtroTipo.set($event)">
+          <option value="">Todos los tipos</option>
+          <option *ngFor="let tipo of tiposEntidad" [value]="tipo">{{ tipo }}</option>
+        </select>
+      </label>
+      <label>
+        Orden
+        <select [ngModel]="orden()" (ngModelChange)="orden.set($event)">
+          <option value="newest">Más recientes</option>
+          <option value="oldest">Más antiguas</option>
+        </select>
+      </label>
+      <div class="history-filter-actions">
+        <span>{{ totalHistorial() }} resultados</span>
+        <button type="button" class="refresh-button" [disabled]="cargandoHistorial()" (click)="limpiarFiltros()">
+          Limpiar
+        </button>
+        <button type="button" class="execute-button" [disabled]="cargandoHistorial()" (click)="aplicarFiltros()">
+          Aplicar filtros
+        </button>
+      </div>
+    </section>
+    <p class="history-filter-note">
+      Los filtros por sede y área usan la ubicación actual registrada para esas áreas; los movimientos
+      conservan sus identificadores, no una copia histórica de los nombres.
+    </p>
     @if (cargandoHistorial()) {
       <p class="panel-empty" role="status">Cargando movimientos…</p>
     } @else if (historial().length === 0) {
-      <p class="panel-empty">Todavía no se registraron transferencias.</p>
+      <p class="panel-empty">No se encontraron transferencias para estos filtros.</p>
     } @else {
       <div class="history-list">
         @for (transferencia of historial(); track transferencia.id) {
@@ -325,6 +398,15 @@
           </article>
         }
       </div>
+      <nav class="history-pagination" aria-label="Paginación del historial de transferencias">
+        <button type="button" class="refresh-button" [disabled]="cargandoHistorial() || pagina() <= 1" (click)="paginaAnterior()">
+          Anterior
+        </button>
+        <span>Página {{ pagina() }} de {{ totalPaginas() }} · {{ totalHistorial() }} resultados</span>
+        <button type="button" class="refresh-button" [disabled]="cargandoHistorial() || pagina() >= totalPaginas()" (click)="paginaSiguiente()">
+          Siguiente
+        </button>
+      </nav>
     }
   </section>
 </main>

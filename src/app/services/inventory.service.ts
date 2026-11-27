@@ -1,4 +1,4 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { v4 as uuidv4 } from 'uuid';
@@ -20,6 +20,20 @@ import {
   TransferenciaInventario,
 } from '../models/inventory.model';
 import { DEFAULT_SEDE_ID } from '../../shared/locations';
+import type { PagedResult } from '../models/paged-result';
+
+export interface InventoryTransferFilters {
+  search: string;
+  site: string;
+  area: string;
+  operator: string;
+  from: string;
+  to: string;
+  type: string;
+  sort: 'newest' | 'oldest';
+  page: number;
+  pageSize: number;
+}
 
 export interface InventoryData {
   pisos: Piso[];
@@ -30,6 +44,121 @@ export interface InventoryData {
   equiposRed: EquipoRed[];
   componentesRetirados: ComponenteRetirado[];
   historial: HistorialMovimiento[];
+}
+
+const absentValue = Symbol('absent');
+type MaybeValue = unknown | typeof absentValue;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function cloneValue<T>(value: T): T {
+  if (value instanceof Date) return new Date(value.getTime()) as T;
+  if (Array.isArray(value)) return value.map((item) => cloneValue(item)) as T;
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneValue(item)]),
+    ) as T;
+  }
+  return value;
+}
+
+function valuesEqual(left: MaybeValue, right: MaybeValue): boolean {
+  if (left === absentValue || right === absentValue) return left === right;
+  if (Object.is(left, right)) return true;
+  if (left instanceof Date || right instanceof Date) {
+    const leftTime =
+      left instanceof Date
+        ? left.getTime()
+        : typeof left === 'string'
+          ? Date.parse(left)
+          : Number.NaN;
+    const rightTime =
+      right instanceof Date
+        ? right.getTime()
+        : typeof right === 'string'
+          ? Date.parse(right)
+          : Number.NaN;
+    return Number.isFinite(leftTime) && leftTime === rightTime;
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => valuesEqual(value, right[index]))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) => Object.hasOwn(right, key) && valuesEqual(left[key], right[key]),
+      )
+    );
+  }
+  return false;
+}
+
+function isIdArray(
+  base: MaybeValue,
+  server: MaybeValue,
+  local: MaybeValue,
+): base is Record<string, unknown>[] {
+  return [base, server, local].every(
+    (value) =>
+      Array.isArray(value) &&
+      value.every((item) => isRecord(item) && typeof item['id'] === 'string'),
+  );
+}
+
+function mergeConcurrentValues(
+  base: MaybeValue,
+  server: MaybeValue,
+  local: MaybeValue,
+): MaybeValue {
+  if (valuesEqual(local, base)) return cloneValue(server);
+  if (valuesEqual(server, base) || valuesEqual(server, local)) return cloneValue(local);
+  if (local === absentValue) return absentValue;
+  if (server === absentValue) return cloneValue(local);
+
+  if (isRecord(base) && isRecord(server) && isRecord(local)) {
+    const merged: Record<string, unknown> = {};
+    const keys = new Set([...Object.keys(base), ...Object.keys(server), ...Object.keys(local)]);
+    for (const key of keys) {
+      const value = mergeConcurrentValues(
+        Object.hasOwn(base, key) ? base[key] : absentValue,
+        Object.hasOwn(server, key) ? server[key] : absentValue,
+        Object.hasOwn(local, key) ? local[key] : absentValue,
+      );
+      if (value !== absentValue) merged[key] = value;
+    }
+    return merged;
+  }
+
+  if (isIdArray(base, server, local)) {
+    const records = (value: MaybeValue): Map<string, Record<string, unknown>> =>
+      new Map(
+        (value as Record<string, unknown>[]).map(
+          (record) => [record['id'] as string, record] as const,
+        ),
+      );
+    const baseRecords = records(base);
+    const serverRecords = records(server);
+    const localRecords = records(local);
+    const ids = [...new Set([...localRecords.keys(), ...serverRecords.keys()])];
+    return ids.flatMap((id) => {
+      const value = mergeConcurrentValues(
+        baseRecords.get(id) ?? absentValue,
+        serverRecords.get(id) ?? absentValue,
+        localRecords.get(id) ?? absentValue,
+      );
+      return value === absentValue ? [] : [value];
+    });
+  }
+
+  return cloneValue(local);
 }
 
 export type ComponentEdit = Omit<ComponentePuesto, 'id'>;
@@ -50,6 +179,24 @@ interface TransferResponse extends InventoryResponse {
   transferenciaId: string;
 }
 
+interface StockShipmentResponse extends InventoryResponse {
+  idempotencyKey: string;
+  movementId: string;
+  alreadyProcessed: boolean;
+}
+
+export class StockShipmentRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+    readonly outcomeUnknown: boolean,
+  ) {
+    super(message);
+    this.name = 'StockShipmentRequestError';
+  }
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -58,6 +205,7 @@ export class InventoryService {
   private idSequence = 0;
   private revision = 0;
   private persistedSnapshot: InventoryData | null = null;
+  private writeQueue: Promise<void> | null = null;
 
   readonly pisos = signal<Piso[]>([]);
   readonly areas = signal<Area[]>([]);
@@ -70,8 +218,16 @@ export class InventoryService {
   readonly cargando = signal(false);
   readonly errorCarga = signal('');
   readonly errorServidor = signal('');
+  readonly conflictoInventario = signal<
+    { revision: string; payload: InventoryData } | null
+  >(null);
 
   async cargarDesdeServidor(): Promise<void> {
+    if (this.conflictoInventario()) {
+      const message = this.mensajeConflictoRevision();
+      this.errorServidor.set(message);
+      throw new Error(message);
+    }
     this.cargando.set(true);
     this.errorCarga.set('');
     this.errorServidor.set('');
@@ -79,7 +235,8 @@ export class InventoryService {
       const response = await firstValueFrom(this.http.get<InventoryResponse>('/api/inventory'));
       this.revision = Number(response.revision);
       this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
+      this.persistedSnapshot = cloneValue(this.obtenerInventario());
+      this.conflictoInventario.set(null);
     } catch (error: unknown) {
       const message = this.obtenerMensajeError(
         error,
@@ -92,41 +249,30 @@ export class InventoryService {
     }
   }
 
-  async guardarEnServidor(): Promise<void> {
-    const payload = this.obtenerInventario();
-    try {
-      const response = await firstValueFrom(
-        this.http.put<InventoryResponse>('/api/inventory', {
-          revision: this.revision,
-          payload,
-        }),
-      );
-      this.revision = Number(response.revision);
-      this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
-      this.errorServidor.set('');
-    } catch (error: unknown) {
-      const remote = error instanceof HttpErrorResponse ? error.error : null;
-      if (
-        error instanceof HttpErrorResponse &&
-        error.status === 409 &&
-        remote &&
-        typeof remote.revision === 'string' &&
-        this.esInventario(remote.payload)
-      ) {
-        this.revision = Number(remote.revision);
-        this.aplicarInventario(remote.payload);
-        this.persistedSnapshot = this.obtenerInventario();
-      } else if (this.persistedSnapshot) {
-        this.aplicarInventario(this.persistedSnapshot);
+  guardarEnServidor(): Promise<void> {
+    return this.serializarEscritura(async () => {
+      const payload = cloneValue(this.obtenerInventario());
+      try {
+        const response = await firstValueFrom(
+          this.http.put<InventoryResponse>('/api/inventory', {
+            revision: this.revision,
+            payload,
+          }),
+        );
+        this.aceptarRespuestaDelServidor(response, payload);
+        this.errorServidor.set('');
+      } catch (error: unknown) {
+        const conflicto = this.registrarConflictoRevision(error);
+        const message = conflicto
+          ? this.mensajeConflictoRevision()
+          : this.obtenerMensajeError(
+              error,
+              'No se pudieron guardar los cambios en el servidor. Tus cambios locales se conservaron.',
+            );
+        this.errorServidor.set(message);
+        throw new Error(message);
       }
-      const message = this.obtenerMensajeError(
-        error,
-        'No se pudieron guardar los cambios en el servidor.',
-      );
-      this.errorServidor.set(message);
-      throw new Error(message);
-    }
+    });
   }
 
   async enviarStockADelegacion(
@@ -134,28 +280,44 @@ export class InventoryService {
     destinoSedeId: string,
     cantidad: number,
     motivo: string,
-  ): Promise<void> {
-    try {
-      const response = await firstValueFrom(
-        this.http.post<InventoryResponse>('/api/inventory/stock-transfers', {
-          insumoId,
-          destinoSedeId,
-          cantidad,
-          motivo,
-        }),
-      );
-      this.revision = Number(response.revision);
-      this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
-      this.errorServidor.set('');
-    } catch (error: unknown) {
-      const message = this.obtenerMensajeError(
-        error,
-        'No se pudo enviar el stock a la delegación.',
-      );
-      this.errorServidor.set(message);
-      throw new Error(message);
-    }
+    idempotencyKey: string,
+    expectedActorId: string,
+  ): Promise<{ alreadyProcessed: boolean }> {
+    return this.serializarEscritura(async () => {
+      const base = cloneValue(this.persistedSnapshot ?? this.obtenerInventario());
+      try {
+        const response = await firstValueFrom(
+          this.http.post<StockShipmentResponse>('/api/inventory/stock-transfers', {
+            insumoId,
+            destinoSedeId,
+            cantidad,
+            motivo,
+            idempotencyKey,
+            expectedActorId,
+          }),
+        );
+        this.aceptarRespuestaDelServidor(response, base);
+        this.errorServidor.set('');
+        return { alreadyProcessed: response.alreadyProcessed };
+      } catch (error: unknown) {
+        const message = this.obtenerMensajeError(
+          error,
+          'No se pudo enviar el stock a la delegación. Los cambios locales se conservaron.',
+        );
+        this.errorServidor.set(message);
+        if (error instanceof HttpErrorResponse) {
+          const code = error.error?.code;
+          const errorCode = typeof code === 'string' ? code : null;
+          throw new StockShipmentRequestError(
+            message,
+            error.status,
+            errorCode,
+            !(error.status === 400 && errorCode === 'SHIPMENT_REJECTED'),
+          );
+        }
+        throw new StockShipmentRequestError(message, 0, null, true);
+      }
+    });
   }
 
   async editarComponenteAdministrativamente(
@@ -164,37 +326,29 @@ export class InventoryService {
     changes: ComponentEdit,
     reason: string,
   ): Promise<void> {
-    try {
-      const response = await firstValueFrom(
-        this.http.patch<InventoryResponse>(
-          `/api/inventory/puestos/${encodeURIComponent(puestoId)}/componentes/${encodeURIComponent(componenteId)}`,
-          { revision: this.revision, changes, reason },
-        ),
-      );
-      this.revision = Number(response.revision);
-      this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
-      this.errorServidor.set('');
-    } catch (error: unknown) {
-      const remote = error instanceof HttpErrorResponse ? error.error : null;
-      if (
-        error instanceof HttpErrorResponse &&
-        error.status === 409 &&
-        remote &&
-        typeof remote.revision === 'string' &&
-        this.esInventario(remote.payload)
-      ) {
-        this.revision = Number(remote.revision);
-        this.aplicarInventario(remote.payload);
-        this.persistedSnapshot = this.obtenerInventario();
+    return this.serializarEscritura(async () => {
+      const base = cloneValue(this.persistedSnapshot ?? this.obtenerInventario());
+      try {
+        const response = await firstValueFrom(
+          this.http.patch<InventoryResponse>(
+            `/api/inventory/puestos/${encodeURIComponent(puestoId)}/componentes/${encodeURIComponent(componenteId)}`,
+            { revision: this.revision, changes, reason },
+          ),
+        );
+        this.aceptarRespuestaDelServidor(response, base);
+        this.errorServidor.set('');
+      } catch (error: unknown) {
+        const conflicto = this.registrarConflictoRevision(error);
+        const message = conflicto
+          ? this.mensajeConflictoRevision()
+          : this.obtenerMensajeError(
+              error,
+              'No se pudo actualizar el componente en el servidor. Los cambios locales se conservaron.',
+            );
+        this.errorServidor.set(message);
+        throw new Error(message);
       }
-      const message = this.obtenerMensajeError(
-        error,
-        'No se pudo actualizar el componente en el servidor.',
-      );
-      this.errorServidor.set(message);
-      throw new Error(message);
-    }
+    });
   }
 
   exportarRespaldo(): InventoryBackup {
@@ -207,32 +361,120 @@ export class InventoryService {
   }
 
   async importarRespaldo(value: unknown): Promise<void> {
-    if (
-      !value ||
-      typeof value !== 'object' ||
-      !('format' in value) ||
-      value.format !== 'gestion-it-backup' ||
-      !('version' in value) ||
-      value.version !== 1 ||
-      !('inventory' in value) ||
-      !this.esInventario(value.inventory)
-    ) {
+    if (!this.esRespaldo(value)) {
       throw new Error('El archivo no es un respaldo válido de Gestión IT.');
     }
-    try {
-      const response = await firstValueFrom(
-        this.http.post<InventoryResponse>('/api/inventory/import', {
-          payload: value.inventory,
-        }),
-      );
-      this.revision = Number(response.revision);
-      this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
-    } catch (error: unknown) {
-      throw new Error(
-        this.obtenerMensajeError(error, 'No se pudo importar el respaldo en el servidor.'),
-      );
+    return this.serializarEscritura(async () => {
+      const base = cloneValue(this.obtenerInventario());
+      try {
+        const response = await firstValueFrom(
+          this.http.post<InventoryResponse>('/api/inventory/import', {
+            payload: value.inventory,
+          }),
+        );
+        this.aceptarRespuestaDelServidor(response, base);
+        this.errorServidor.set('');
+      } catch (error: unknown) {
+        const conflicto = this.registrarConflictoRevision(error);
+        const message = conflicto
+          ? this.mensajeConflictoRevision()
+          : this.obtenerMensajeError(
+              error,
+              'No se pudo importar el respaldo en el servidor. Los cambios locales se conservaron.',
+            );
+        this.errorServidor.set(message);
+        throw new Error(message);
+      }
+    });
+  }
+
+  async resolverConflictoConRespaldo(value: unknown): Promise<void> {
+    if (!this.esRespaldo(value)) {
+      throw new Error('El archivo no es un respaldo válido de Gestión IT.');
     }
+    const conflicto = this.conflictoInventario();
+    if (!conflicto) {
+      throw new Error('No hay un conflicto de revisión pendiente para resolver.');
+    }
+
+    this.revision = Number(conflicto.revision);
+    this.persistedSnapshot = cloneValue(conflicto.payload);
+    this.aplicarInventario(cloneValue(value.inventory));
+    this.conflictoInventario.set(null);
+    this.errorServidor.set('');
+    await this.guardarEnServidor();
+  }
+
+  private serializarEscritura<T>(operation: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      if (this.conflictoInventario()) {
+        const message = this.mensajeConflictoRevision();
+        this.errorServidor.set(message);
+        throw new Error(message);
+      }
+      return operation();
+    };
+    const result = this.writeQueue ? this.writeQueue.then(run) : run();
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeQueue = tail;
+    void tail.then(() => {
+      if (this.writeQueue === tail) this.writeQueue = null;
+    });
+    return result;
+  }
+
+  private aceptarRespuestaDelServidor(
+    response: InventoryResponse,
+    base: InventoryData,
+  ): void {
+    const local = this.obtenerInventario();
+    const merged = mergeConcurrentValues(base, response.payload, local);
+    if (!isRecord(merged) || !this.esInventario(merged)) {
+      throw new Error('El servidor devolvió un inventario inválido.');
+    }
+
+    this.revision = Number(response.revision);
+    this.persistedSnapshot = cloneValue(response.payload);
+    this.aplicarInventario(merged);
+    this.conflictoInventario.set(null);
+  }
+
+  private registrarConflictoRevision(error: unknown): boolean {
+    if (!(error instanceof HttpErrorResponse) || error.status !== 409 || !isRecord(error.error)) {
+      return false;
+    }
+    const remote = error.error;
+    const revision = remote['revision'];
+    const payload = remote['payload'];
+    if (
+      typeof revision !== 'string' ||
+      !Number.isSafeInteger(Number(revision)) ||
+      !this.esInventario(payload)
+    ) {
+      return false;
+    }
+
+    this.conflictoInventario.set({
+      revision,
+      payload: cloneValue(payload),
+    });
+    return true;
+  }
+
+  private mensajeConflictoRevision(): string {
+    return 'El inventario cambió en el servidor. Tus cambios locales se conservaron y no se volverán a enviar automáticamente. Compará ambas versiones y resolvé el conflicto antes de continuar.';
+  }
+
+  private esRespaldo(value: unknown): value is InventoryBackup {
+    return (
+      isRecord(value) &&
+      value['format'] === 'gestion-it-backup' &&
+      value['version'] === 1 &&
+      this.esInventario(value['inventory'])
+    );
   }
 
   private esInventario(value: unknown): value is InventoryData {
@@ -372,6 +614,45 @@ export class InventoryService {
     return nuevoPiso;
   }
 
+  editarPiso(pisoId: string, changes: Pick<Piso, 'nombre' | 'nivel'>): void {
+    if (!this.pisos().some((item) => item.id === pisoId)) {
+      throw new Error('No se encontró el piso que querés editar.');
+    }
+    const nombre = changes.nombre.trim();
+    if (
+      !nombre ||
+      nombre.length > 120 ||
+      !Number.isSafeInteger(changes.nivel) ||
+      changes.nivel < 0
+    ) {
+      throw new Error('Ingresá un nombre de piso y un nivel entero no negativo.');
+    }
+    this.pisos.update((items) =>
+      items.map((item) => (item.id === pisoId ? { ...item, nombre, nivel: changes.nivel } : item)),
+    );
+  }
+
+  editarArea(areaId: string, nombre: string): void {
+    const area = this.areas().find((item) => item.id === areaId);
+    if (!area) throw new Error('No se encontró el área que querés editar.');
+    const nombreValidado = nombre.trim();
+    if (!nombreValidado || nombreValidado.length > 120) {
+      throw new Error('Ingresá un nombre de área válido de hasta 120 caracteres.');
+    }
+    if (
+      this.areas().some(
+        (item) =>
+          item.id !== areaId &&
+          item.nombre.toLocaleLowerCase() === nombreValidado.toLocaleLowerCase(),
+      )
+    ) {
+      throw new Error('Ya existe un área con ese nombre.');
+    }
+    this.areas.update((areas) =>
+      areas.map((item) => (item.id === areaId ? { ...item, nombre: nombreValidado } : item)),
+    );
+  }
+
   eliminarPiso(pisoId: string): void {
     if (this.areas().some((area) => area.pisoId === pisoId)) {
       throw new Error(
@@ -437,6 +718,24 @@ export class InventoryService {
       'BAJA_EQUIPO_RED',
       `Se eliminó el ${equipo.tipo} ${equipo.marca} ${equipo.modelo} del área ${equipo.areaId}.`,
       { equipoRedId: equipo.id, sedeId },
+    );
+  }
+
+  editarEquipoRed(
+    equipoRedId: string,
+    changes: Pick<EquipoRed, 'tipo' | 'marca' | 'modelo'>,
+  ): void {
+    const equipo = this.equiposRed().find((item) => item.id === equipoRedId);
+    if (!equipo) throw new Error('No se encontró el equipo de red que querés editar.');
+    const marca = changes.marca.trim();
+    const modelo = changes.modelo.trim();
+    if (!marca || marca.length > 120 || !modelo || modelo.length > 120) {
+      throw new Error('Completá marca y modelo con un máximo de 120 caracteres.');
+    }
+    this.equiposRed.update((items) =>
+      items.map((item) =>
+        item.id === equipoRedId ? { ...item, tipo: changes.tipo, marca, modelo } : item,
+      ),
     );
   }
 
@@ -550,6 +849,52 @@ export class InventoryService {
     this.stock.update((stock) => stock.filter((insumo) => insumo.id !== id));
   }
 
+  editarProductoStock(
+    insumoId: string,
+    changes: Pick<StockInsumo, 'tipo' | 'marca' | 'especificacion' | 'stockMinimo'>,
+  ): void {
+    const insumo = this.stock().find((item) => item.id === insumoId);
+    if (!insumo) throw new Error('No se encontró el producto que querés editar.');
+    const marca = changes.marca.trim();
+    const especificacion = changes.especificacion.trim();
+    if (
+      !marca ||
+      marca.length > 120 ||
+      !especificacion ||
+      especificacion.length > 500 ||
+      !Number.isInteger(changes.stockMinimo) ||
+      changes.stockMinimo < 0
+    ) {
+      throw new Error('Completá los datos del producto y un stock mínimo entero no negativo.');
+    }
+    const siteId = insumo.sedeId ?? DEFAULT_SEDE_ID;
+    if (
+      this.stock().some(
+        (item) =>
+          item.id !== insumoId &&
+          item.tipo === changes.tipo &&
+          item.marca.toLocaleLowerCase() === marca.toLocaleLowerCase() &&
+          item.especificacion.toLocaleLowerCase() === especificacion.toLocaleLowerCase() &&
+          (item.sedeId ?? DEFAULT_SEDE_ID) === siteId,
+      )
+    ) {
+      throw new Error('Ya existe un producto con esos datos en esta sede.');
+    }
+    this.stock.update((items) =>
+      items.map((item) =>
+        item.id === insumoId
+          ? {
+              ...item,
+              tipo: changes.tipo,
+              marca,
+              especificacion,
+              stockMinimo: changes.stockMinimo,
+            }
+          : item,
+      ),
+    );
+  }
+
   crearPuestoTrabajo(
     nuevoPuesto: Omit<PuestoTrabajo, 'id' | 'codigoSeguimiento'> & {
       codigoSeguimiento?: string;
@@ -595,43 +940,103 @@ export class InventoryService {
     return puesto;
   }
 
-  async ejecutarTransferencia(transferencia: SolicitudTransferenciaInventario): Promise<void> {
-    try {
-      const response = await firstValueFrom(
-        this.http.post<TransferResponse>('/api/transferencias', {
-          revision: this.revision,
-          ...transferencia,
-        }),
+  editarPuestoTrabajo(
+    puestoId: string,
+    changes: Pick<PuestoTrabajo, 'nombrePuesto' | 'usuarioAsignado'>,
+  ): void {
+    const puesto = this.puestos().find((item) => item.id === puestoId);
+    if (!puesto) throw new Error('No se encontró el puesto que querés editar.');
+    const nombrePuesto = changes.nombrePuesto.trim();
+    const usuarioAsignado = changes.usuarioAsignado.trim();
+    if (
+      !nombrePuesto ||
+      nombrePuesto.length > 120 ||
+      !usuarioAsignado ||
+      usuarioAsignado.length > 200
+    ) {
+      throw new Error('Completá el nombre del puesto y la persona asignada.');
+    }
+    const sedeId = this.sedeDeArea(puesto.areaId);
+    if (
+      this.personas().some(
+        (persona) =>
+          persona.puestoId !== puestoId &&
+          persona.nombre.trim().toLocaleLowerCase() === usuarioAsignado.toLocaleLowerCase() &&
+          this.sedeDeArea(persona.areaId) === sedeId,
+      )
+    ) {
+      throw new Error(
+        `La persona "${usuarioAsignado}" ya está registrada en otro puesto de esta sede.`,
       );
-      this.revision = Number(response.revision);
-      this.aplicarInventario(response.payload);
-      this.persistedSnapshot = this.obtenerInventario();
-      this.errorServidor.set('');
-    } catch (error: unknown) {
-      const remote = error instanceof HttpErrorResponse ? error.error : null;
-      if (
-        error instanceof HttpErrorResponse &&
-        error.status === 409 &&
-        remote &&
-        typeof remote.revision === 'string' &&
-        this.esInventario(remote.payload)
-      ) {
-        this.revision = Number(remote.revision);
-        this.aplicarInventario(remote.payload);
-        this.persistedSnapshot = this.obtenerInventario();
-      }
-      const message = this.obtenerMensajeError(
-        error,
-        'No se pudo completar la transferencia de inventario.',
+    }
+    this.puestos.update((items) =>
+      items.map((item) =>
+        item.id === puestoId ? { ...item, nombrePuesto, usuarioAsignado } : item,
+      ),
+    );
+    const persona = this.personas().find((item) => item.puestoId === puestoId);
+    if (persona) {
+      this.personas.update((items) =>
+        items.map((item) =>
+          item.puestoId === puestoId
+            ? { ...item, nombre: usuarioAsignado, areaId: puesto.areaId }
+            : item,
+        ),
       );
-      this.errorServidor.set(message);
-      throw new Error(message);
+    } else {
+      this.personas.update((items) => [
+        ...items,
+        {
+          id: this.generarId('persona'),
+          nombre: usuarioAsignado,
+          areaId: puesto.areaId,
+          puestoId,
+        },
+      ]);
     }
   }
 
-  async listarTransferencias(): Promise<TransferenciaInventario[]> {
+  async ejecutarTransferencia(transferencia: SolicitudTransferenciaInventario): Promise<void> {
+    return this.serializarEscritura(async () => {
+      const base = cloneValue(this.persistedSnapshot ?? this.obtenerInventario());
+      try {
+        const response = await firstValueFrom(
+          this.http.post<TransferResponse>('/api/transferencias', {
+            revision: this.revision,
+            ...transferencia,
+          }),
+        );
+        this.aceptarRespuestaDelServidor(response, base);
+        this.errorServidor.set('');
+      } catch (error: unknown) {
+        const conflicto = this.registrarConflictoRevision(error);
+        const message = conflicto
+          ? this.mensajeConflictoRevision()
+          : this.obtenerMensajeError(
+              error,
+              'No se pudo completar la transferencia de inventario. Los cambios locales se conservaron.',
+            );
+        this.errorServidor.set(message);
+        throw new Error(message);
+      }
+    });
+  }
+
+  async listarTransferencias(
+    filters: InventoryTransferFilters,
+  ): Promise<PagedResult<TransferenciaInventario>> {
+    let params = new HttpParams()
+      .set('page', filters.page)
+      .set('pageSize', filters.pageSize)
+      .set('sort', filters.sort);
+    for (const key of ['search', 'site', 'area', 'operator', 'from', 'to', 'type'] as const) {
+      const value = filters[key].trim();
+      if (value) params = params.set(key, value);
+    }
     try {
-      return await firstValueFrom(this.http.get<TransferenciaInventario[]>('/api/transferencias'));
+      return await firstValueFrom(
+        this.http.get<PagedResult<TransferenciaInventario>>('/api/transferencias', { params }),
+      );
     } catch (error: unknown) {
       throw new Error(
         this.obtenerMensajeError(error, 'No se pudo cargar el historial de transferencias.'),

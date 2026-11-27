@@ -1,7 +1,8 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type { TicketCategory } from '../../shared/tickets';
+import type { PagedResult } from '../models/paged-result';
 
 export type TicketState = 'Abierto' | 'En proceso' | 'Terminado';
 
@@ -51,10 +52,25 @@ export interface DashboardTicket {
   fecha_creacion: string;
   fecha_resolucion: string | null;
   area_nombre: string | null;
+  inventory_area_id: string | null;
   sede_id: string | null;
   sede_nombre: string | null;
   nombre_afectado: string | null;
   taller: Pick<WorkshopTransfer, 'estado' | 'equipo' | 'identificacion'> | null;
+}
+
+export interface TicketFilters {
+  search: string;
+  site: string;
+  area: string;
+  responsible: string;
+  from: string;
+  to: string;
+  state: string;
+  category: string;
+  sort: 'newest' | 'oldest';
+  page: number;
+  pageSize: number;
 }
 
 export interface AffectedWorkstation {
@@ -77,6 +93,12 @@ export interface WorkshopReturnInput {
   motivoReemplazo: string;
 }
 
+export interface TicketDetailsInput {
+  titulo: string;
+  descripcion: string;
+  categoria: TicketCategory;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketsService {
   private readonly http = inject(HttpClient);
@@ -86,6 +108,24 @@ export class TicketsService {
       return await firstValueFrom(this.http.get<SupportTicket[]>('/api/tickets'));
     } catch (error: unknown) {
       throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los reclamos activos.'));
+    }
+  }
+
+  async buscar(filters: TicketFilters): Promise<PagedResult<SupportTicket>> {
+    let params = new HttpParams()
+      .set('page', filters.page)
+      .set('pageSize', filters.pageSize)
+      .set('sort', filters.sort);
+    for (const key of ['search', 'site', 'area', 'responsible', 'from', 'to', 'state', 'category'] as const) {
+      const value = filters[key].trim();
+      if (value) params = params.set(key, value);
+    }
+    try {
+      return await firstValueFrom(
+        this.http.get<PagedResult<SupportTicket>>('/api/tickets', { params }),
+      );
+    } catch (error: unknown) {
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar los reclamos.'));
     }
   }
 
@@ -105,10 +145,57 @@ export class TicketsService {
     }
   }
 
+  async buscarMios(filters: TicketFilters): Promise<PagedResult<SupportTicket>> {
+    let params = new HttpParams()
+      .set('page', filters.page)
+      .set('pageSize', filters.pageSize)
+      .set('sort', filters.sort);
+    for (const key of ['search', 'from', 'to', 'state', 'category'] as const) {
+      const value = filters[key].trim();
+      if (value) params = params.set(key, value);
+    }
+    try {
+      return await firstValueFrom(
+        this.http.get<PagedResult<SupportTicket>>('/api/tickets/mine', { params }),
+      );
+    } catch (error: unknown) {
+      throw new Error(this.obtenerMensaje(error, 'No se pudieron cargar tus reclamos.'));
+    }
+  }
+
   async listarPorArea(areaId: string): Promise<SupportTicket[]> {
     try {
       return await firstValueFrom(
         this.http.get<SupportTicket[]>(`/api/tickets/areas/${encodeURIComponent(areaId)}`),
+      );
+    } catch (error: unknown) {
+      throw new Error(
+        this.obtenerMensaje(error, 'No se pudo cargar el historial de reclamos del área.'),
+      );
+    }
+  }
+
+  async buscarPorArea(
+    areaId: string,
+    filters: Pick<
+      TicketFilters,
+      'search' | 'responsible' | 'from' | 'to' | 'state' | 'category' | 'sort' | 'page' | 'pageSize'
+    >,
+  ): Promise<PagedResult<SupportTicket>> {
+    let params = new HttpParams()
+      .set('page', filters.page)
+      .set('pageSize', filters.pageSize)
+      .set('sort', filters.sort);
+    for (const key of ['search', 'responsible', 'from', 'to', 'state', 'category'] as const) {
+      const value = filters[key].trim();
+      if (value) params = params.set(key, value);
+    }
+    try {
+      return await firstValueFrom(
+        this.http.get<PagedResult<SupportTicket>>(
+          `/api/tickets/areas/${encodeURIComponent(areaId)}`,
+          { params },
+        ),
       );
     } catch (error: unknown) {
       throw new Error(
@@ -152,6 +239,19 @@ export class TicketsService {
       );
     } catch (error: unknown) {
       throw new Error(this.obtenerMensaje(error, 'No se pudo enviar el reclamo.'));
+    }
+  }
+
+  async editarDetalles(id: string, details: TicketDetailsInput): Promise<SupportTicket> {
+    try {
+      return await firstValueFrom(
+        this.http.patch<SupportTicket>(
+          `/api/tickets/${encodeURIComponent(id)}/details`,
+          details,
+        ),
+      );
+    } catch (error: unknown) {
+      throw new Error(this.obtenerMensaje(error, 'No se pudo editar el reclamo.'));
     }
   }
 

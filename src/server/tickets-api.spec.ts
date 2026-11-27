@@ -1,5 +1,6 @@
 import {
   canRequesterSeeTicketInArea,
+  parseTicketDetails,
   parseTicketInput,
   parseTicketUpdate,
   parseWorkshopApprovalInput,
@@ -107,6 +108,33 @@ describe('parseTicketUpdate', () => {
     });
     expect(parseTicketUpdate({ estado: 'Terminado', solucion: '  ' })).toBeNull();
     expect(parseTicketUpdate({ estado: 'Resuelto', solucion: 'Hecho' })).toBeNull();
+  });
+});
+
+describe('parseTicketDetails', () => {
+  it('accepts descriptive edits but rejects changes to linked or historical fields', () => {
+    expect(
+      parseTicketDetails({
+        titulo: '  Impresora sin conexión ',
+        descripcion: ' Reiniciar cola de impresión ',
+        categoria: 'Computadora',
+      }),
+    ).toEqual({
+      titulo: 'Impresora sin conexión',
+      descripcion: 'Reiniciar cola de impresión',
+      categoria: 'Computadora',
+    });
+    expect(
+      parseTicketDetails({
+        titulo: 'Asunto',
+        descripcion: 'Detalle',
+        categoria: 'Computadora',
+        puestoAfectadoId: 'otro-puesto',
+      }),
+    ).toBeNull();
+    expect(
+      parseTicketDetails({ titulo: 'Asunto', descripcion: 'Detalle', categoria: 'Desconocida' }),
+    ).toBeNull();
   });
 });
 

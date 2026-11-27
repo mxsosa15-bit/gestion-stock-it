@@ -23,6 +23,7 @@ import { WorkshopTicketsComponent } from './components/workshop-tickets/workshop
 import { InventoryTransfersComponent } from './components/inventory-transfers/inventory-transfers.component';
 import { OperatorAuditComponent } from './components/operator-audit/operator-audit.component';
 import { OperatorTasksComponent } from './components/operator-tasks/operator-tasks.component';
+import { ReportsComponent } from './components/reports/reports.component';
 import { StockDispatchComponent } from './components/stock-dispatch/stock-dispatch.component';
 import { LocationsService } from './services/locations.service';
 import { OperatorTasksService } from './services/operator-tasks.service';
@@ -35,6 +36,7 @@ import {
   EstadoComponenteRetirado,
   HistorialMovimiento,
   PuestoTrabajo,
+  Sede,
   StockInsumo,
   TipoEquipoRed,
   TipoPeriferico,
@@ -93,6 +95,22 @@ interface EditorComponente {
   motivo: string;
 }
 
+interface EditorRegistroInventario {
+  tipo: 'PUESTO' | 'STOCK' | 'RED' | 'AREA' | 'PISO';
+  id: string;
+  nombrePuesto: string;
+  usuarioAsignado: string;
+  tipoStock: TipoPeriferico;
+  marca: string;
+  especificacion: string;
+  stockMinimo: number;
+  tipoRed: TipoEquipoRed;
+  modelo: string;
+  nombreArea: string;
+  nombrePiso: string;
+  nivelPiso: number;
+}
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -109,6 +127,7 @@ interface EditorComponente {
     InventoryTransfersComponent,
     OperatorAuditComponent,
     OperatorTasksComponent,
+    ReportsComponent,
     StockDispatchComponent,
   ],
   templateUrl: './app.html',
@@ -125,6 +144,10 @@ export class App implements OnDestroy {
   readonly authUsuario = signal('');
   readonly authContrasena = signal('');
   readonly backupImportando = signal(false);
+  readonly resolviendoConflicto = signal(false);
+  readonly guardandoModal = signal(false);
+  readonly eliminandoRegistro = signal(false);
+  readonly componenteEstadoActualizandoId = signal<string | null>(null);
   readonly nuevoUsuario = signal({
     username: '',
     password: '',
@@ -163,6 +186,17 @@ export class App implements OnDestroy {
   readonly componenteEnEdicion = signal<EditorComponente | null>(null);
   readonly errorEdicionComponente = signal('');
   readonly guardandoEdicionComponente = signal(false);
+  readonly registroEnEdicion = signal<EditorRegistroInventario | null>(null);
+  readonly guardandoEdicionInventario = signal(false);
+  readonly sedeEnEdicionId = signal<string | null>(null);
+  readonly sedeEdicion = signal<NewLocation>({
+    nombre: '',
+    departamento: '',
+    localidad: '',
+    direccion: '',
+  });
+  readonly actualizandoSede = signal(false);
+  readonly errorEdicionSede = signal('');
 
   constructor() {
     void this.inicializarSesion();
@@ -181,7 +215,9 @@ export class App implements OnDestroy {
   private async cargarInventario(): Promise<void> {
     try {
       await this.inventoryService.cargarDesdeServidor();
-      await this.locationsService.cargar();
+      if (this.authService.user()?.role !== 'dashboard') {
+        await this.locationsService.cargar();
+      }
       if (!this.sedes().some((sede) => sede.id === this.sedeSeleccionadaId())) {
         this.sedeSeleccionadaId.set(this.sedes()[0]?.id ?? DEFAULT_SEDE_ID);
       }
@@ -229,28 +265,90 @@ export class App implements OnDestroy {
   }
 
   exportarRespaldoJson(): void {
-    const respaldo = this.inventoryService.exportarRespaldo();
+    this.descargarJson(
+      this.inventoryService.exportarRespaldo(),
+      `gestion-it-respaldo-${new Date().toISOString().slice(0, 10)}.json`,
+    );
+    this.mostrarToast('Se descargó el respaldo del inventario.');
+  }
+
+  descargarVersionConflicto(origen: 'local' | 'servidor'): void {
+    const conflicto = this.inventoryService.conflictoInventario();
+    if (!conflicto) return;
+
+    const respaldo =
+      origen === 'local'
+        ? this.inventoryService.exportarRespaldo()
+        : {
+            format: 'gestion-it-backup' as const,
+            version: 1 as const,
+            createdAt: new Date().toISOString(),
+            inventory: conflicto.payload,
+          };
+    const fecha = new Date().toISOString().slice(0, 10);
+    this.descargarJson(respaldo, `gestion-it-conflicto-${origen}-${fecha}.json`);
+    this.mostrarToast(
+      `Se descargó la versión ${origen === 'local' ? 'local' : 'del servidor'}.`,
+    );
+  }
+
+  async resolverConflictoJson(event: Event): Promise<void> {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const archivo = input.files?.[0];
+    if (!archivo || this.resolviendoConflicto()) return;
+
+    this.resolviendoConflicto.set(true);
+    try {
+      const respaldo: unknown = JSON.parse(await archivo.text());
+      if (
+        !window.confirm(
+          `¿Confirmás guardar la versión combinada "${archivo.name}"?\n\nSe usará como inventario completo y se enviará con la última revisión del servidor. Verificá que el archivo incluya los cambios que querés conservar de ambas versiones.`,
+        )
+      ) {
+        return;
+      }
+      await this.inventoryService.resolverConflictoConRespaldo(respaldo);
+      this.mostrarToast('Se resolvió el conflicto y se guardó la versión combinada.');
+    } catch (error: unknown) {
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudo resolver el conflicto.',
+        'error',
+      );
+    } finally {
+      this.resolviendoConflicto.set(false);
+      input.value = '';
+    }
+  }
+
+  private descargarJson(respaldo: unknown, nombreArchivo: string): void {
     const contenido = new Blob([JSON.stringify(respaldo, null, 2)], {
       type: 'application/json',
     });
     const url = URL.createObjectURL(contenido);
     const enlace = document.createElement('a');
     enlace.href = url;
-    enlace.download = `gestion-it-respaldo-${new Date().toISOString().slice(0, 10)}.json`;
+    enlace.download = nombreArchivo;
     enlace.click();
     URL.revokeObjectURL(url);
-    this.mostrarToast('Se descargó el respaldo del inventario.');
   }
 
   async importarRespaldoJson(event: Event): Promise<void> {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
     const archivo = input.files?.[0];
-    if (!archivo) return;
+    if (!archivo || this.backupImportando()) return;
 
     this.backupImportando.set(true);
     try {
       const respaldo: unknown = JSON.parse(await archivo.text());
+      if (
+        !window.confirm(
+          `¿Confirmás restaurar el respaldo "${archivo.name}"? Esta operación importará sus datos al inventario disponible.`,
+        )
+      ) {
+        return;
+      }
       await this.inventoryService.importarRespaldo(respaldo);
       this.mostrarToast('Se restauró el respaldo en el servidor.');
     } catch (error: unknown) {
@@ -280,7 +378,7 @@ export class App implements OnDestroy {
       TICKETS: 'Reclamos de soporte',
       TRANSFERENCIAS: 'Transferencias y mudanzas',
       AUDITORIA: 'Auditoría de operadores',
-      TAREAS: 'Bitácora de tareas',
+      TAREAS: 'Registro de actividades',
     };
     return titulos[this.vistaActiva()];
   });
@@ -360,6 +458,93 @@ export class App implements OnDestroy {
     const areaIds = new Set(this.areas().map((area) => area.id));
     return this.inventoryService.equiposRed().filter((equipo) => areaIds.has(equipo.areaId));
   });
+  readonly busquedaStock = signal('');
+  readonly tipoStockFiltro = signal('');
+  readonly estadoStockFiltro = signal<'TODOS' | 'BAJO' | 'SIN_STOCK' | 'DISPONIBLE'>('TODOS');
+  readonly ordenStock = signal<'NOMBRE' | 'CANTIDAD_ASC' | 'CANTIDAD_DESC'>('NOMBRE');
+  readonly paginaStock = signal(1);
+  readonly stockPorPagina = 25;
+  readonly stockFiltrado = computed(() => {
+    let result = this.stock();
+    const search = this.normalizarBusqueda(this.busquedaStock());
+    const type = this.tipoStockFiltro();
+    const state = this.estadoStockFiltro();
+    if (type) result = result.filter((item) => item.tipo === type);
+    if (state === 'BAJO') {
+      result = result.filter(
+        (item) => item.cantidadDisponible > 0 && item.cantidadDisponible <= item.stockMinimo,
+      );
+    } else if (state === 'SIN_STOCK') {
+      result = result.filter((item) => item.cantidadDisponible === 0);
+    } else if (state === 'DISPONIBLE') {
+      result = result.filter((item) => item.cantidadDisponible > item.stockMinimo);
+    }
+    if (search) {
+      result = result.filter((item) =>
+        this.normalizarBusqueda(
+          [item.tipo, item.marca, item.especificacion, item.codigoSeguimiento ?? ''].join(' '),
+        ).includes(search),
+      );
+    }
+    return [...result].sort((left, right) => {
+      if (this.ordenStock() === 'CANTIDAD_ASC') {
+        return left.cantidadDisponible - right.cantidadDisponible || left.marca.localeCompare(right.marca);
+      }
+      if (this.ordenStock() === 'CANTIDAD_DESC') {
+        return right.cantidadDisponible - left.cantidadDisponible || left.marca.localeCompare(right.marca);
+      }
+      return left.marca.localeCompare(right.marca, 'es') || left.tipo.localeCompare(right.tipo, 'es');
+    });
+  });
+  readonly paginasStock = computed(() =>
+    Math.max(1, Math.ceil(this.stockFiltrado().length / this.stockPorPagina)),
+  );
+  readonly stockPaginado = computed(() => {
+    const page = Math.min(this.paginaStock(), this.paginasStock());
+    const start = (page - 1) * this.stockPorPagina;
+    return this.stockFiltrado().slice(start, start + this.stockPorPagina);
+  });
+  readonly busquedaRed = signal('');
+  readonly tipoRedFiltro = signal('');
+  readonly areaRedFiltro = signal('TODAS');
+  readonly ordenRed = signal<'MARCA' | 'TIPO' | 'AREA'>('MARCA');
+  readonly paginaRed = signal(1);
+  readonly redPorPagina = 25;
+  readonly equiposRedFiltrados = computed(() => {
+    let result = this.equiposRed();
+    const search = this.normalizarBusqueda(this.busquedaRed());
+    const type = this.tipoRedFiltro();
+    const area = this.areaRedFiltro();
+    if (type) result = result.filter((item) => item.tipo === type);
+    if (area !== 'TODAS') result = result.filter((item) => item.areaId === area);
+    if (search) {
+      result = result.filter((item) => {
+        const areaName = this.areas().find((candidate) => candidate.id === item.areaId)?.nombre ?? '';
+        return this.normalizarBusqueda(
+          [item.tipo, item.marca, item.modelo, item.codigoSeguimiento, areaName].join(' '),
+        ).includes(search);
+      });
+    }
+    return [...result].sort((left, right) => {
+      if (this.ordenRed() === 'TIPO') {
+        return left.tipo.localeCompare(right.tipo, 'es') || left.marca.localeCompare(right.marca, 'es');
+      }
+      if (this.ordenRed() === 'AREA') {
+        const leftArea = this.areas().find((item) => item.id === left.areaId)?.nombre ?? '';
+        const rightArea = this.areas().find((item) => item.id === right.areaId)?.nombre ?? '';
+        return leftArea.localeCompare(rightArea, 'es') || left.marca.localeCompare(right.marca, 'es');
+      }
+      return left.marca.localeCompare(right.marca, 'es') || left.modelo.localeCompare(right.modelo, 'es');
+    });
+  });
+  readonly paginasRed = computed(() =>
+    Math.max(1, Math.ceil(this.equiposRedFiltrados().length / this.redPorPagina)),
+  );
+  readonly equiposRedPaginados = computed(() => {
+    const page = Math.min(this.paginaRed(), this.paginasRed());
+    const start = (page - 1) * this.redPorPagina;
+    return this.equiposRedFiltrados().slice(start, start + this.redPorPagina);
+  });
   readonly componentesRetirados = computed(() => {
     const puestosPorId = new Map(
       this.inventoryService.puestos().map((puesto) => [puesto.id, puesto]),
@@ -376,8 +561,64 @@ export class App implements OnDestroy {
     });
   });
   historial = this.inventoryService.historial;
-  readonly movimientosVisibles = signal(10);
-  readonly historialVisible = computed(() => this.historial().slice(0, this.movimientosVisibles()));
+  readonly busquedaActividad = signal('');
+  readonly tipoActividadFiltro = signal('');
+  readonly operadorActividadFiltro = signal('');
+  readonly sedeActividadFiltro = signal('TODAS');
+  readonly desdeActividad = signal('');
+  readonly hastaActividad = signal('');
+  readonly ordenActividad = signal<'NEWEST' | 'OLDEST'>('NEWEST');
+  readonly paginaActividad = signal(1);
+  readonly actividadPorPagina = 25;
+  readonly tiposActividad = computed(() =>
+    [...new Set(this.historial().map((item) => item.tipo))].sort((left, right) =>
+      left.localeCompare(right, 'es'),
+    ),
+  );
+  readonly actividadFiltrada = computed(() => {
+    let result = this.historial();
+    const search = this.normalizarBusqueda(this.busquedaActividad());
+    const operator = this.normalizarBusqueda(this.operadorActividadFiltro());
+    const site = this.sedeActividadFiltro();
+    if (this.tipoActividadFiltro()) {
+      result = result.filter((item) => item.tipo === this.tipoActividadFiltro());
+    }
+    if (operator) {
+      result = result.filter((item) => this.normalizarBusqueda(item.operador ?? '').includes(operator));
+    }
+    if (site !== 'TODAS') {
+      result = result.filter(
+        (item) => item.sedeId === site || item.sedeDestinoId === site,
+      );
+    }
+    if (this.desdeActividad()) {
+      result = result.filter(
+        (item) => this.fechaLocalIso(item.fecha) >= this.desdeActividad(),
+      );
+    }
+    if (this.hastaActividad()) {
+      result = result.filter(
+        (item) => this.fechaLocalIso(item.fecha) <= this.hastaActividad(),
+      );
+    }
+    if (search) {
+      result = result.filter((item) =>
+        this.normalizarBusqueda([item.tipo, item.detalle, item.operador ?? ''].join(' ')).includes(search),
+      );
+    }
+    return [...result].sort((left, right) => {
+      const direction = this.ordenActividad() === 'NEWEST' ? -1 : 1;
+      return direction * (new Date(left.fecha).getTime() - new Date(right.fecha).getTime());
+    });
+  });
+  readonly paginasActividad = computed(() =>
+    Math.max(1, Math.ceil(this.actividadFiltrada().length / this.actividadPorPagina)),
+  );
+  readonly historialVisible = computed(() => {
+    const page = Math.min(this.paginaActividad(), this.paginasActividad());
+    const start = (page - 1) * this.actividadPorPagina;
+    return this.actividadFiltrada().slice(start, start + this.actividadPorPagina);
+  });
   readonly inventarioVacio = computed(() =>
     [
       this.inventoryService.pisos(),
@@ -390,15 +631,15 @@ export class App implements OnDestroy {
     ].every((coleccion) => coleccion.length === 0),
   );
 
-  mostrarMasActividad(): void {
-    this.movimientosVisibles.update((cantidad) => Math.min(cantidad + 10, this.historial().length));
-  }
-
   // Filtros parque
   readonly vistaParque = signal<'TARJETAS' | 'LISTA'>('TARJETAS');
   pisoSeleccionadoId = signal<string>('TODOS');
   areaSeleccionadaId = signal<string>('TODAS');
   busquedaParque = signal('');
+  tipoComponenteParque = signal('');
+  ordenParque = signal<'PUESTO' | 'USUARIO' | 'COMPONENTES'>('PUESTO');
+  paginaParque = signal(1);
+  readonly parquePorPagina = 25;
 
   // Formularios
   nuevoPiso = { nombre: '', nivel: 0 };
@@ -542,25 +783,90 @@ export class App implements OnDestroy {
       resultado = resultado.filter((p) => p.areaId === areaId);
     }
 
+    const componentType = this.tipoComponenteParque();
+    if (componentType) {
+      resultado = resultado.filter((puesto) =>
+        puesto.componentes.some((componente) => componente.tipo === componentType),
+      );
+    }
     const consulta = this.normalizarBusqueda(this.busquedaParque());
     if (consulta) {
       resultado = resultado.filter(
         (puesto) =>
+          this.normalizarBusqueda(
+            [puesto.nombrePuesto, puesto.codigoSeguimiento, puesto.usuarioAsignado].join(' '),
+          ).includes(consulta) ||
           this.normalizarBusqueda(puesto.usuarioAsignado).includes(consulta) ||
           puesto.componentes.some(
             (componente) =>
+              this.normalizarBusqueda(componente.tipo).includes(consulta) ||
               this.normalizarBusqueda(componente.marca).includes(consulta) ||
               this.normalizarBusqueda(componente.modelo ?? '').includes(consulta) ||
-              this.normalizarBusqueda(componente.numeroSerie ?? '').includes(consulta),
+              this.normalizarBusqueda(componente.numeroSerie ?? '').includes(consulta) ||
+              this.normalizarBusqueda(componente.especificacion).includes(consulta) ||
+              this.normalizarBusqueda(componente.codigoSeguimiento ?? '').includes(consulta),
           ),
       );
     }
 
-    return resultado;
+    return [...resultado].sort((left, right) => {
+      if (this.ordenParque() === 'USUARIO') {
+        return left.usuarioAsignado.localeCompare(right.usuarioAsignado, 'es');
+      }
+      if (this.ordenParque() === 'COMPONENTES') {
+        return right.componentes.length - left.componentes.length ||
+          left.nombrePuesto.localeCompare(right.nombrePuesto, 'es');
+      }
+      return left.nombrePuesto.localeCompare(right.nombrePuesto, 'es');
+    });
+  });
+  readonly paginasParque = computed(() =>
+    Math.max(1, Math.ceil(this.puestosFiltrados().length / this.parquePorPagina)),
+  );
+  readonly puestosPaginados = computed(() => {
+    const page = Math.min(this.paginaParque(), this.paginasParque());
+    const start = (page - 1) * this.parquePorPagina;
+    return this.puestosFiltrados().slice(start, start + this.parquePorPagina);
   });
   readonly componentesStockBajo = computed(
     () => this.stock().filter((insumo) => insumo.cantidadDisponible <= insumo.stockMinimo).length,
   );
+
+  limpiarFiltrosStock(): void {
+    this.busquedaStock.set('');
+    this.tipoStockFiltro.set('');
+    this.estadoStockFiltro.set('TODOS');
+    this.ordenStock.set('NOMBRE');
+    this.paginaStock.set(1);
+  }
+
+  limpiarFiltrosParque(): void {
+    this.pisoSeleccionadoId.set('TODOS');
+    this.areaSeleccionadaId.set('TODAS');
+    this.busquedaParque.set('');
+    this.tipoComponenteParque.set('');
+    this.ordenParque.set('PUESTO');
+    this.paginaParque.set(1);
+  }
+
+  limpiarFiltrosRed(): void {
+    this.busquedaRed.set('');
+    this.tipoRedFiltro.set('');
+    this.areaRedFiltro.set('TODAS');
+    this.ordenRed.set('MARCA');
+    this.paginaRed.set(1);
+  }
+
+  limpiarFiltrosActividad(): void {
+    this.busquedaActividad.set('');
+    this.tipoActividadFiltro.set('');
+    this.operadorActividadFiltro.set('');
+    this.sedeActividadFiltro.set('TODAS');
+    this.desdeActividad.set('');
+    this.hastaActividad.set('');
+    this.ordenActividad.set('NEWEST');
+    this.paginaActividad.set(1);
+  }
 
   // Métodos auxiliares
   private normalizarBusqueda(valor: string): string {
@@ -612,22 +918,42 @@ export class App implements OnDestroy {
     }
   }
 
+  private fechaLocalIso(value: Date | string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   cambiarSede(sedeId: string): void {
     if (!this.sedes().some((sede) => sede.id === sedeId)) return;
     this.sedeSeleccionadaId.set(sedeId);
     this.pisoSeleccionadoId.set('TODOS');
     this.areaSeleccionadaId.set('TODAS');
+    this.paginaParque.set(1);
+    this.paginaStock.set(1);
+    this.paginaRed.set(1);
     this.pisoSeleccionadoEdificio.set('');
     this.pisoSeleccionadoFormPuesto.set('');
     this.pisoSeleccionadoFormEquipoRed.set('');
   }
 
   async crearSede(): Promise<void> {
+    if (this.creandoSede()) return;
     const sede = this.nuevaSede();
     if (!sede.nombre.trim()) {
       this.errorSedes.set('Ingresá el nombre de la delegación.');
       return;
     }
+    const resumen = [
+      `Delegación: ${sede.nombre.trim()}`,
+      `Departamento: ${sede.departamento.trim() || 'Sin departamento'}`,
+      `Localidad: ${sede.localidad.trim() || 'Sin localidad'}`,
+      `Dirección: ${sede.direccion.trim() || 'Sin dirección'}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás crear esta sede?\n\n${resumen}`)) return;
     this.errorSedes.set('');
     this.creandoSede.set(true);
     try {
@@ -646,6 +972,64 @@ export class App implements OnDestroy {
       this.errorSedes.set(error instanceof Error ? error.message : 'No se pudo crear la sede.');
     } finally {
       this.creandoSede.set(false);
+    }
+  }
+
+  iniciarEdicionSede(sede: Sede): void {
+    if (this.authService.user()?.role !== 'admin') return;
+    this.sedeEnEdicionId.set(sede.id);
+    this.sedeEdicion.set({
+      nombre: sede.nombre,
+      departamento: sede.departamento,
+      localidad: sede.localidad,
+      direccion: sede.direccion,
+    });
+    this.errorEdicionSede.set('');
+  }
+
+  actualizarCampoSede(campo: keyof NewLocation, valor: string): void {
+    this.sedeEdicion.update((sede) => ({ ...sede, [campo]: valor }));
+  }
+
+  cancelarEdicionSede(): void {
+    if (this.actualizandoSede()) return;
+    this.sedeEnEdicionId.set(null);
+    this.errorEdicionSede.set('');
+  }
+
+  async guardarEdicionSede(): Promise<void> {
+    const id = this.sedeEnEdicionId();
+    const sede = this.sedeEdicion();
+    if (!id || this.actualizandoSede() || this.authService.user()?.role !== 'admin') return;
+    if (!sede.nombre.trim() || sede.nombre.trim().length > 120) {
+      this.errorEdicionSede.set('Ingresá un nombre de sede válido de hasta 120 caracteres.');
+      return;
+    }
+    const anterior = this.sedes().find((item) => item.id === id);
+    const cambios = [
+      `Nombre: ${anterior?.nombre ?? '—'} → ${sede.nombre.trim()}`,
+      `Departamento: ${anterior?.departamento || 'Sin departamento'} → ${sede.departamento.trim() || 'Sin departamento'}`,
+      `Localidad: ${anterior?.localidad || 'Sin localidad'} → ${sede.localidad.trim() || 'Sin localidad'}`,
+      `Dirección: ${anterior?.direccion || 'Sin dirección'} → ${sede.direccion.trim() || 'Sin dirección'}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás modificar la sede?\n\n${cambios}`)) return;
+    this.actualizandoSede.set(true);
+    this.errorEdicionSede.set('');
+    try {
+      await this.locationsService.actualizar(id, {
+        nombre: sede.nombre.trim(),
+        departamento: sede.departamento.trim(),
+        localidad: sede.localidad.trim(),
+        direccion: sede.direccion.trim(),
+      });
+      this.sedeEnEdicionId.set(null);
+      this.mostrarToast('Se actualizaron los datos de la sede.');
+    } catch (error: unknown) {
+      this.errorEdicionSede.set(
+        error instanceof Error ? error.message : 'No se pudo actualizar la sede.',
+      );
+    } finally {
+      this.actualizandoSede.set(false);
     }
   }
 
@@ -832,6 +1216,7 @@ export class App implements OnDestroy {
   }
 
   cerrarModal(): void {
+    if (this.guardandoModal()) return;
     if (this.modalActivo() === 'NUEVO_COMPONENTE') {
       this.puestoComponenteId.set(null);
     }
@@ -905,6 +1290,7 @@ export class App implements OnDestroy {
   }
 
   async guardarComponenteManual(): Promise<void> {
+    if (this.guardandoModal()) return;
     const puestoId = this.puestoComponenteId();
     const componente = this.nuevoComponenteManual();
     const marca = componente.marca.trim();
@@ -914,7 +1300,16 @@ export class App implements OnDestroy {
       this.errorFormulario.set('Completá marca, modelo y características del componente.');
       return;
     }
+    const puesto = this.puestos().find((item) => item.id === puestoId);
+    if (
+      !window.confirm(
+        `¿Confirmás registrar este componente?\n\nPuesto: ${puesto?.nombrePuesto ?? puestoId}\nComponente: ${componente.tipo} · ${marca} ${modelo}\nCaracterísticas: ${caracteristicas}`,
+      )
+    ) {
+      return;
+    }
 
+    this.guardandoModal.set(true);
     try {
       const componenteGuardado = this.inventoryService.agregarComponenteManual(puestoId, {
         tipo: componente.tipo,
@@ -923,6 +1318,7 @@ export class App implements OnDestroy {
         especificacion: caracteristicas,
       });
       await this.inventoryService.guardarEnServidor();
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast(
         this.tiposPerifericosExternos.includes(componenteGuardado.tipo)
@@ -933,6 +1329,8 @@ export class App implements OnDestroy {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo agregar el componente.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
@@ -979,7 +1377,11 @@ export class App implements OnDestroy {
 
   async guardarEdicionComponente(): Promise<void> {
     const componente = this.componenteEnEdicion();
-    if (!componente || this.authService.user()?.role !== 'admin') return;
+    if (
+      !componente ||
+      this.guardandoEdicionComponente() ||
+      this.authService.user()?.role !== 'admin'
+    ) return;
 
     const marca = componente.marca.trim();
     const modelo = componente.modelo.trim();
@@ -992,8 +1394,6 @@ export class App implements OnDestroy {
       return;
     }
 
-    this.guardandoEdicionComponente.set(true);
-    this.errorEdicionComponente.set('');
     const cambios: ComponentEdit = {
       tipo: componente.tipo,
       marca,
@@ -1002,6 +1402,23 @@ export class App implements OnDestroy {
       ...(numeroSerie ? { numeroSerie } : {}),
       ...(codigoSeguimiento ? { codigoSeguimiento } : {}),
     };
+    const anterior = this.puestos()
+      .find((puesto) => puesto.id === componente.puestoId)
+      ?.componentes.find((item) => item.id === componente.id);
+    const nombrePuesto =
+      this.puestos().find((puesto) => puesto.id === componente.puestoId)?.nombrePuesto ??
+      componente.puestoId;
+    const resumen = [
+      `Puesto: ${nombrePuesto}`,
+      `Tipo: ${anterior?.tipo ?? '—'} → ${cambios.tipo}`,
+      `Marca: ${anterior?.marca ?? '—'} → ${cambios.marca}`,
+      `Modelo: ${anterior?.modelo ?? '—'} → ${cambios.modelo ?? 'Sin modelo'}`,
+      `Especificación: ${anterior?.especificacion ?? '—'} → ${cambios.especificacion}`,
+      `Motivo: ${motivo}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás corregir los datos del componente?\n\n${resumen}`)) return;
+    this.guardandoEdicionComponente.set(true);
+    this.errorEdicionComponente.set('');
     try {
       await this.inventoryService.editarComponenteAdministrativamente(
         componente.puestoId,
@@ -1020,6 +1437,267 @@ export class App implements OnDestroy {
     }
   }
 
+  abrirEdicionPuesto(puesto: PuestoTrabajo): void {
+    if (!this.puedeEditarInventario()) return;
+    this.registroEnEdicion.set({
+      tipo: 'PUESTO',
+      id: puesto.id,
+      nombrePuesto: puesto.nombrePuesto,
+      usuarioAsignado: puesto.usuarioAsignado,
+      tipoStock: 'DISCO_SSD',
+      marca: '',
+      especificacion: '',
+      stockMinimo: 0,
+      tipoRed: 'SWITCH',
+      modelo: '',
+      nombreArea: '',
+      nombrePiso: '',
+      nivelPiso: 0,
+    });
+  }
+
+  abrirEdicionStock(insumo: StockInsumo): void {
+    if (!this.puedeEditarInventario()) return;
+    this.registroEnEdicion.set({
+      tipo: 'STOCK',
+      id: insumo.id,
+      nombrePuesto: '',
+      usuarioAsignado: '',
+      tipoStock: insumo.tipo,
+      marca: insumo.marca,
+      especificacion: insumo.especificacion,
+      stockMinimo: insumo.stockMinimo,
+      tipoRed: 'SWITCH',
+      modelo: '',
+      nombreArea: '',
+      nombrePiso: '',
+      nivelPiso: 0,
+    });
+  }
+
+  abrirEdicionEquipoRed(equipo: EquipoRed): void {
+    if (!this.puedeEditarInventario()) return;
+    this.registroEnEdicion.set({
+      tipo: 'RED',
+      id: equipo.id,
+      nombrePuesto: '',
+      usuarioAsignado: '',
+      tipoStock: 'DISCO_SSD',
+      marca: equipo.marca,
+      especificacion: '',
+      stockMinimo: 0,
+      tipoRed: equipo.tipo,
+      modelo: equipo.modelo,
+      nombreArea: '',
+      nombrePiso: '',
+      nivelPiso: 0,
+    });
+  }
+
+  abrirEdicionArea(areaId: string): void {
+    if (!this.puedeEditarInventario()) return;
+    const area = this.inventoryService.areas().find((item) => item.id === areaId);
+    if (!area) return;
+    this.registroEnEdicion.set({
+      tipo: 'AREA',
+      id: area.id,
+      nombrePuesto: '',
+      usuarioAsignado: '',
+      tipoStock: 'DISCO_SSD',
+      marca: '',
+      especificacion: '',
+      stockMinimo: 0,
+      tipoRed: 'SWITCH',
+      modelo: '',
+      nombreArea: area.nombre,
+      nombrePiso: '',
+      nivelPiso: 0,
+    });
+  }
+
+  abrirEdicionPiso(pisoId: string): void {
+    if (!this.puedeEditarInventario()) return;
+    const piso = this.inventoryService.pisos().find((item) => item.id === pisoId);
+    if (!piso) return;
+    this.registroEnEdicion.set({
+      tipo: 'PISO',
+      id: piso.id,
+      nombrePuesto: '',
+      usuarioAsignado: '',
+      tipoStock: 'DISCO_SSD',
+      marca: '',
+      especificacion: '',
+      stockMinimo: 0,
+      tipoRed: 'SWITCH',
+      modelo: '',
+      nombreArea: '',
+      nombrePiso: piso.nombre,
+      nivelPiso: piso.nivel,
+    });
+  }
+
+  actualizarEdicionPuesto(campo: 'nombrePuesto' | 'usuarioAsignado', valor: string): void {
+    this.registroEnEdicion.update((editor) =>
+      editor?.tipo === 'PUESTO' ? { ...editor, [campo]: valor } : editor,
+    );
+  }
+
+  actualizarEdicionStock(
+    campo: 'tipoStock' | 'marca' | 'especificacion' | 'stockMinimo',
+    valor: string | number,
+  ): void {
+    this.registroEnEdicion.update((editor) => {
+      if (editor?.tipo !== 'STOCK') return editor;
+      if (campo === 'tipoStock') {
+        const tipo = this.tiposPerifericosCompletos.find((item) => item === valor);
+        return tipo ? { ...editor, tipoStock: tipo } : editor;
+      }
+      if (campo === 'stockMinimo') {
+        const stockMinimo = typeof valor === 'number' ? valor : Number(valor);
+        return { ...editor, stockMinimo };
+      }
+      if (campo === 'marca') return { ...editor, marca: String(valor) };
+      return { ...editor, especificacion: String(valor) };
+    });
+  }
+
+  actualizarEdicionEquipoRed(campo: 'tipoRed' | 'marca' | 'modelo', valor: string): void {
+    this.registroEnEdicion.update((editor) => {
+      if (editor?.tipo !== 'RED') return editor;
+      if (campo === 'tipoRed') {
+        const tipo = this.tiposEquipoRed.find((item) => item === valor);
+        return tipo ? { ...editor, tipoRed: tipo } : editor;
+      }
+      return { ...editor, [campo]: valor };
+    });
+  }
+
+  actualizarEdicionArea(nombreArea: string): void {
+    this.registroEnEdicion.update((editor) =>
+      editor?.tipo === 'AREA' ? { ...editor, nombreArea } : editor,
+    );
+  }
+
+  actualizarEdicionPiso(campo: 'nombrePiso' | 'nivelPiso', valor: string | number): void {
+    this.registroEnEdicion.update((editor) => {
+      if (editor?.tipo !== 'PISO') return editor;
+      if (campo === 'nombrePiso') return { ...editor, nombrePiso: String(valor) };
+      return { ...editor, nivelPiso: typeof valor === 'number' ? valor : Number(valor) };
+    });
+  }
+
+  cancelarEdicionInventario(): void {
+    if (this.guardandoEdicionInventario()) return;
+    this.registroEnEdicion.set(null);
+  }
+
+  private resumenCambiosInventario(editor: EditorRegistroInventario): string {
+    switch (editor.tipo) {
+      case 'PUESTO': {
+        const actual = this.puestos().find((item) => item.id === editor.id);
+        return [
+          `Puesto: ${actual?.nombrePuesto ?? '—'} → ${editor.nombrePuesto.trim()}`,
+          `Usuario asignado: ${actual?.usuarioAsignado ?? '—'} → ${editor.usuarioAsignado.trim()}`,
+        ].join('\n');
+      }
+      case 'STOCK': {
+        const actual = this.stock().find((item) => item.id === editor.id);
+        return [
+          `Producto: ${actual?.marca ?? '—'} ${actual?.especificacion ?? ''} → ${editor.marca.trim()} ${editor.especificacion.trim()}`,
+          `Tipo: ${actual?.tipo ?? '—'} → ${editor.tipoStock}`,
+          `Stock mínimo: ${actual?.stockMinimo ?? '—'} → ${editor.stockMinimo}`,
+          'El saldo actual y el historial de movimientos no se modificarán.',
+        ].join('\n');
+      }
+      case 'RED': {
+        const actual = this.equiposRed().find((item) => item.id === editor.id);
+        return [
+          `Tipo: ${actual?.tipo ?? '—'} → ${editor.tipoRed}`,
+          `Marca: ${actual?.marca ?? '—'} → ${editor.marca.trim()}`,
+          `Modelo: ${actual?.modelo ?? '—'} → ${editor.modelo.trim()}`,
+        ].join('\n');
+      }
+      case 'AREA': {
+        const actual = this.areas().find((item) => item.id === editor.id);
+        return `Área: ${actual?.nombre ?? '—'} → ${editor.nombreArea.trim()}`;
+      }
+      case 'PISO': {
+        const actual = this.pisos().find((item) => item.id === editor.id);
+        return [
+          `Piso: ${actual?.nombre ?? '—'} → ${editor.nombrePiso.trim()}`,
+          `Nivel: ${actual?.nivel ?? '—'} → ${editor.nivelPiso}`,
+        ].join('\n');
+      }
+    }
+  }
+
+  async guardarEdicionInventario(): Promise<void> {
+    const editor = this.registroEnEdicion();
+    if (!editor || this.guardandoEdicionInventario() || !this.puedeEditarInventario()) return;
+    const nombres: Record<EditorRegistroInventario['tipo'], string> = {
+      PUESTO: editor.nombrePuesto,
+      STOCK: editor.marca,
+      RED: `${editor.marca} ${editor.modelo}`,
+      AREA: editor.nombreArea,
+      PISO: editor.nombrePiso,
+    };
+    if (
+      !window.confirm(
+        `¿Confirmás modificar ${nombres[editor.tipo]}?\n\n${this.resumenCambiosInventario(editor)}`,
+      )
+    ) return;
+    this.guardandoEdicionInventario.set(true);
+    try {
+      switch (editor.tipo) {
+        case 'PUESTO':
+          this.inventoryService.editarPuestoTrabajo(editor.id, {
+            nombrePuesto: editor.nombrePuesto,
+            usuarioAsignado: editor.usuarioAsignado,
+          });
+          break;
+        case 'STOCK':
+          this.inventoryService.editarProductoStock(editor.id, {
+            tipo: editor.tipoStock,
+            marca: editor.marca,
+            especificacion: editor.especificacion,
+            stockMinimo: editor.stockMinimo,
+          });
+          break;
+        case 'RED':
+          this.inventoryService.editarEquipoRed(editor.id, {
+            tipo: editor.tipoRed,
+            marca: editor.marca,
+            modelo: editor.modelo,
+          });
+          break;
+        case 'AREA':
+          this.inventoryService.editarArea(editor.id, editor.nombreArea);
+          break;
+        case 'PISO':
+          this.inventoryService.editarPiso(editor.id, {
+            nombre: editor.nombrePiso,
+            nivel: editor.nivelPiso,
+          });
+          break;
+      }
+      await this.inventoryService.guardarEnServidor();
+      this.registroEnEdicion.set(null);
+      this.mostrarToast('Se guardaron los cambios y quedaron registrados en auditoría.');
+    } catch (error: unknown) {
+      this.mostrarToast(
+        error instanceof Error ? error.message : 'No se pudieron guardar los cambios.',
+        'error',
+      );
+    } finally {
+      this.guardandoEdicionInventario.set(false);
+    }
+  }
+
+  private puedeEditarInventario(): boolean {
+    const role = this.authService.user()?.role;
+    return role === 'admin' || role === 'operator';
+  }
+
   mostrarToast(mensaje: string, tipo: ToastNotification['tipo'] = 'success'): void {
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toast.set({ mensaje, tipo });
@@ -1033,17 +1711,20 @@ export class App implements OnDestroy {
   }
 
   solicitarEliminacion(tipo: TipoConfirmacion, id: string, nombre: string): void {
+    if (this.eliminandoRegistro()) return;
     this.confirmacionPendiente.set({ tipo, id, nombre });
   }
 
   cancelarEliminacion(): void {
+    if (this.eliminandoRegistro()) return;
     this.confirmacionPendiente.set(null);
   }
 
   async confirmarEliminacion(): Promise<void> {
     const confirmacion = this.confirmacionPendiente();
-    if (!confirmacion) return;
+    if (!confirmacion || this.eliminandoRegistro()) return;
 
+    this.eliminandoRegistro.set(true);
     try {
       switch (confirmacion.tipo) {
         case 'PUESTO':
@@ -1086,16 +1767,26 @@ export class App implements OnDestroy {
         error instanceof Error ? error.message : 'No se pudo completar la eliminación.',
         'error',
       );
+    } finally {
+      this.eliminandoRegistro.set(false);
     }
   }
 
   // Guardar datos
   async guardarPiso(): Promise<void> {
+    if (this.guardandoModal()) return;
     const nombre = this.nuevoPiso.nombre.trim();
     if (!nombre) {
       this.errorFormulario.set('Ingresá el nombre del piso.');
       return;
     }
+    const sede = this.sedeSeleccionada()?.nombre ?? 'Sede no identificada';
+    if (
+      !window.confirm(
+        `¿Confirmás crear el piso "${nombre}"?\n\nSede: ${sede}\nNivel: ${this.nuevoPiso.nivel}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       const piso = this.inventoryService.crearPiso(
         nombre,
@@ -1105,36 +1796,51 @@ export class App implements OnDestroy {
       await this.inventoryService.guardarEnServidor();
       this.pisoSeleccionadoEdificio.set(piso.id);
       this.nuevoPiso = { nombre: '', nivel: this.nuevoPiso.nivel + 1 };
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast(`Se creó ${piso.nombre}.`);
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo crear el piso.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
   async guardarArea(): Promise<void> {
+    if (this.guardandoModal()) return;
     const pisoId = this.pisoSeleccionadoEdificio();
     const nombre = this.nuevaArea.nombre.trim();
     if (!pisoId || !this.pisos().some((piso) => piso.id === pisoId) || !nombre) {
       this.errorFormulario.set('Seleccioná un piso e ingresá el nombre del área.');
       return;
     }
+    const piso = this.pisos().find((item) => item.id === pisoId);
+    if (
+      !window.confirm(
+        `¿Confirmás crear el área "${nombre}"?\n\nPiso: ${piso?.nombre ?? pisoId}\nSede: ${this.sedes().find((item) => item.id === piso?.sedeId)?.nombre ?? 'Sede no identificada'}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.crearArea(pisoId, nombre);
       await this.inventoryService.guardarEnServidor();
       this.nuevaArea.nombre = '';
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast(`Se creó el área ${nombre}.`);
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo crear el área.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
   async guardarNuevoStock(): Promise<void> {
+    if (this.guardandoModal()) return;
     if (this.sedeSeleccionada()?.tipo !== 'CENTRAL') {
       this.errorFormulario.set(
         'Los ingresos de stock se registran en Casa Central y se envían a las delegaciones.',
@@ -1148,6 +1854,12 @@ export class App implements OnDestroy {
       this.errorFormulario.set('Ingresá marca, especificación y una cantidad entera mayor a cero.');
       return;
     }
+    if (
+      !window.confirm(
+        `¿Confirmás ingresar este producto al stock?\n\nProducto: ${this.nuevoStock.tipo} · ${marca} · ${especificacion}\nCantidad a ingresar: ${cantidad}\nSede donde se registrará: ${this.sedeSeleccionada()?.nombre ?? 'Casa Central'}\nStock mínimo: ${this.nuevoStock.stockMinimo}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.agregarInsumoStock(
         {
@@ -1162,16 +1874,20 @@ export class App implements OnDestroy {
       this.nuevoStock.marca = '';
       this.nuevoStock.especificacion = '';
       this.nuevoStock.cantidadDisponible = 1;
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast('El ingreso se agregó al stock.');
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo guardar el stock.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
   async guardarSaldoInicial(): Promise<void> {
+    if (this.guardandoModal()) return;
     if (this.sedeSeleccionada()?.tipo !== 'CENTRAL') {
       this.errorFormulario.set(
         'El saldo inicial se registra en Casa Central; las delegaciones reciben stock mediante envíos.',
@@ -1194,6 +1910,12 @@ export class App implements OnDestroy {
       );
       return;
     }
+    if (
+      !window.confirm(
+        `¿Confirmás registrar el saldo inicial?\n\nProducto: ${this.nuevoStock.tipo} · ${marca} · ${especificacion}\nSaldo inicial: ${cantidad}\nSede donde se registrará: ${this.sedeSeleccionada()?.nombre ?? 'Casa Central'}\nStock mínimo: ${this.nuevoStock.stockMinimo}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.registrarSaldoInicial(
         { ...this.nuevoStock, marca, especificacion, cantidadDisponible: cantidad },
@@ -1203,12 +1925,15 @@ export class App implements OnDestroy {
       this.nuevoStock.marca = '';
       this.nuevoStock.especificacion = '';
       this.nuevoStock.cantidadDisponible = 0;
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast('Se registró el saldo inicial de la sede.');
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo guardar el saldo inicial.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
@@ -1220,6 +1945,19 @@ export class App implements OnDestroy {
   }
 
   async guardarAjusteStock(): Promise<void> {
+    if (this.guardandoModal()) return;
+    const insumo = this.insumoEnAjuste();
+    const sedeStock =
+      this.sedes().find((sede) => sede.id === (insumo?.sedeId ?? DEFAULT_SEDE_ID))?.nombre ??
+      (insumo?.sedeId && insumo.sedeId !== DEFAULT_SEDE_ID
+        ? 'Sede no identificada'
+        : 'Casa Central');
+    if (
+      !window.confirm(
+        `¿Confirmás ajustar el saldo de ${insumo ? `${insumo.marca} ${insumo.especificacion}` : 'este producto'}?\n\nSede: ${sedeStock}\nSaldo actual: ${insumo?.cantidadDisponible ?? 'No disponible'}\nNuevo saldo: ${this.cantidadAjuste()}\nMotivo: ${this.motivoAjuste().trim() || 'Sin motivo indicado'}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.ajustarStock(
         this.insumoEnAjusteId(),
@@ -1227,16 +1965,20 @@ export class App implements OnDestroy {
         this.motivoAjuste(),
       );
       await this.inventoryService.guardarEnServidor();
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast('Se ajustó el saldo y quedó registrado el motivo.');
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo ajustar el inventario.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
   async guardarNuevoPuesto(): Promise<void> {
+    if (this.guardandoModal()) return;
     const pisoId = this.pisoSeleccionadoFormPuesto();
     const areaValida = this.areasFormPuesto().some((area) => area.id === this.nuevoPuesto.areaId);
     if (
@@ -1249,6 +1991,14 @@ export class App implements OnDestroy {
       this.errorFormulario.set('Seleccioná piso y área válidos, y completá los datos del puesto.');
       return;
     }
+    const piso = this.pisos().find((item) => item.id === pisoId);
+    const area = this.areasFormPuesto().find((item) => item.id === this.nuevoPuesto.areaId);
+    if (
+      !window.confirm(
+        `¿Confirmás crear el puesto de trabajo?\n\nPuesto: ${this.nuevoPuesto.nombrePuesto.trim()}\nUsuario asignado: ${this.nuevoPuesto.usuarioAsignado.trim()}\nSede: ${this.sedeSeleccionada()?.nombre ?? 'Sede no identificada'}\nPiso: ${piso?.nombre ?? pisoId}\nÁrea: ${area?.nombre ?? this.nuevoPuesto.areaId}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.crearPuestoTrabajo({
         areaId: this.nuevoPuesto.areaId,
@@ -1259,16 +2009,20 @@ export class App implements OnDestroy {
       await this.inventoryService.guardarEnServidor();
       this.nuevoPuesto.nombrePuesto = '';
       this.nuevoPuesto.usuarioAsignado = '';
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast('El puesto se registró correctamente.');
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo registrar el puesto.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
   async guardarEquipoRed(): Promise<void> {
+    if (this.guardandoModal()) return;
     const { areaId, marca, modelo } = this.nuevoEquipoRed;
     const pisoId = this.pisoSeleccionadoFormEquipoRed();
     const areaValida = this.areasFormEquipoRed().some((area) => area.id === areaId);
@@ -1283,6 +2037,14 @@ export class App implements OnDestroy {
       return;
     }
 
+    const piso = this.pisos().find((item) => item.id === pisoId);
+    const area = this.areasFormEquipoRed().find((item) => item.id === areaId);
+    if (
+      !window.confirm(
+        `¿Confirmás registrar el equipo de red?\n\nEquipo: ${this.nuevoEquipoRed.tipo} · ${marca.trim()} · ${modelo.trim()}\nSede: ${this.sedeSeleccionada()?.nombre ?? 'Sede no identificada'}\nPiso: ${piso?.nombre ?? pisoId}\nÁrea: ${area?.nombre ?? areaId}`,
+      )
+    ) return;
+    this.guardandoModal.set(true);
     try {
       this.inventoryService.crearEquipoRed({
         ...this.nuevoEquipoRed,
@@ -1292,12 +2054,15 @@ export class App implements OnDestroy {
       await this.inventoryService.guardarEnServidor();
       this.nuevoEquipoRed.marca = '';
       this.nuevoEquipoRed.modelo = '';
+      this.guardandoModal.set(false);
       this.cerrarModal();
       this.mostrarToast('El equipo de red se registró correctamente.');
     } catch (error: unknown) {
       this.errorFormulario.set(
         error instanceof Error ? error.message : 'No se pudo registrar el equipo de red.',
       );
+    } finally {
+      this.guardandoModal.set(false);
     }
   }
 
@@ -1306,11 +2071,19 @@ export class App implements OnDestroy {
   }
 
   async cambiarEstadoRetirado(id: string, estado: string): Promise<void> {
+    if (this.componenteEstadoActualizandoId()) return;
     const estadoValidado = this.estadosComponente.find((opcion) => opcion === estado);
     if (!estadoValidado) {
       this.mostrarToast('El estado seleccionado no es válido.', 'error');
       return;
     }
+    const componente = this.componentesRetirados().find((item) => item.id === id);
+    if (
+      !window.confirm(
+        `¿Confirmás cambiar el estado del componente?\n\nComponente: ${componente ? `${componente.componente.tipo} · ${componente.componente.marca} ${componente.componente.modelo ?? ''}` : id}\nEstado: ${componente?.estado === 'SCRAP' ? 'Scrap / baja' : 'En reparación'} → ${estadoValidado === 'SCRAP' ? 'Scrap / baja' : 'En reparación'}\n${estadoValidado === 'SCRAP' ? 'El componente quedará marcado como dado de baja.' : 'El componente quedará registrado en seguimiento de reparación.'}`,
+      )
+    ) return;
+    this.componenteEstadoActualizandoId.set(id);
     try {
       this.inventoryService.cambiarEstadoComponenteRetirado(id, estadoValidado);
       await this.inventoryService.guardarEnServidor();
@@ -1320,6 +2093,8 @@ export class App implements OnDestroy {
         error instanceof Error ? error.message : 'No se pudo actualizar el estado.',
         'error',
       );
+    } finally {
+      this.componenteEstadoActualizandoId.set(null);
     }
   }
 

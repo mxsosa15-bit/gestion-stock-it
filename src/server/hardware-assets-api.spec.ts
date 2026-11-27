@@ -1,4 +1,4 @@
-import { parseHardwareAsset } from './hardware-assets-api';
+import { parseHardwareAsset, parseHardwareAssetEdit } from './hardware-assets-api';
 
 describe('parseHardwareAsset', () => {
   it('trims serial, label, and descriptive fields for one physical device', () => {
@@ -46,5 +46,34 @@ describe('parseHardwareAsset', () => {
         numeroPatrimonio: 'P'.repeat(101),
       }),
     ).toBeNull();
+  });
+});
+
+describe('parseHardwareAssetEdit', () => {
+  it('accepts descriptive fields and prevents serial, site, and label changes', () => {
+    expect(
+      parseHardwareAssetEdit({
+        tipo: 'MONITOR',
+        marca: ' Dell ',
+        modelo: ' P2422H ',
+        especificacion: ' 24 pulgadas ',
+      }),
+    ).toEqual({
+      tipo: 'MONITOR',
+      marca: 'Dell',
+      modelo: 'P2422H',
+      especificacion: '24 pulgadas',
+    });
+    for (const protectedField of ['numeroSerie', 'sedeId', 'numeroPatrimonio']) {
+      expect(
+        parseHardwareAssetEdit({
+          tipo: 'MONITOR',
+          marca: 'Dell',
+          modelo: 'P2422H',
+          especificacion: '24 pulgadas',
+          [protectedField]: 'no-permitido',
+        }),
+      ).toBeNull();
+    }
   });
 });

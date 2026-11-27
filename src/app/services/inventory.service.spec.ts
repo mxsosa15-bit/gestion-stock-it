@@ -53,6 +53,136 @@ describe('InventoryService', () => {
 
   afterEach(() => httpTesting.verify());
 
+  it('serializes saves and keeps edits made while a save is in flight', async () => {
+    const firstSave = service.guardarEnServidor();
+    const firstRequest = httpTesting.expectOne('/api/inventory');
+    const firstPayload = firstRequest.request.body.payload;
+
+    service.stock.update((items) =>
+      items.map((item) => ({ ...item, cantidadDisponible: 7 })),
+    );
+    const secondSave = service.guardarEnServidor();
+
+    firstRequest.flush({ revision: '1', payload: firstPayload });
+    await firstSave;
+    await Promise.resolve();
+
+    const secondRequest = httpTesting.expectOne('/api/inventory');
+    expect(secondRequest.request.body.revision).toBe(1);
+    expect(secondRequest.request.body.payload.stock[0].cantidadDisponible).toBe(7);
+    secondRequest.flush({
+      revision: '2',
+      payload: secondRequest.request.body.payload,
+    });
+    await secondSave;
+
+    expect(service.stock()[0]?.cantidadDisponible).toBe(7);
+  });
+
+  it('preserves the local draft and blocks saves after a revision conflict', async () => {
+    service.stock.set([{ ...stock[0]!, cantidadDisponible: 5 }]);
+    const save = service.guardarEnServidor();
+    const request = httpTesting.expectOne('/api/inventory');
+    const remotePayload = {
+      pisos: [],
+      areas: [],
+      personas: [],
+      stock: [{ ...stock[0]!, cantidadDisponible: 1 }],
+      puestos: [],
+      equiposRed: [],
+      componentesRetirados: [],
+      historial: [],
+    };
+
+    request.flush(
+      { revision: '4', payload: remotePayload },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await expect(save).rejects.toThrow('Tus cambios locales se conservaron');
+
+    expect(service.stock()[0]?.cantidadDisponible).toBe(5);
+    expect(service.conflictoInventario()).toMatchObject({ revision: '4' });
+    await expect(service.guardarEnServidor()).rejects.toThrow('resolvé el conflicto');
+    expect(httpTesting.match('/api/inventory')).toHaveLength(0);
+
+    const combinedPayload = {
+      ...remotePayload,
+      areas: [{ id: 'area-remota', pisoId: 'piso-remoto', nombre: 'Área preservada' }],
+      stock: [{ ...stock[0]!, cantidadDisponible: 5 }],
+    };
+    const resolution = service.resolverConflictoConRespaldo({
+      format: 'gestion-it-backup',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      inventory: combinedPayload,
+    });
+    await Promise.resolve();
+    const resolutionRequest = httpTesting.expectOne('/api/inventory');
+    expect(resolutionRequest.request.body.revision).toBe(4);
+    expect(resolutionRequest.request.body.payload).toEqual(combinedPayload);
+    resolutionRequest.flush({ revision: '5', payload: combinedPayload });
+    await resolution;
+    expect(service.conflictoInventario()).toBeNull();
+  });
+
+  it('preserves the local draft after a non-conflict server error', async () => {
+    service.stock.set([{ ...stock[0]!, cantidadDisponible: 6 }]);
+    const save = service.guardarEnServidor();
+
+    httpTesting.expectOne('/api/inventory').flush(
+      { error: 'server error' },
+      { status: 500, statusText: 'Server Error' },
+    );
+    await expect(save).rejects.toThrow();
+
+    expect(service.stock()[0]?.cantidadDisponible).toBe(6);
+  });
+
+  it('edits stock metadata and workstation assignment without changing balances or location IDs', () => {
+    service.stock.set([
+      {
+        ...stock[0]!,
+        codigoSeguimiento: 'STOCK-001',
+        sedeId: '00000000-0000-4000-8000-000000000001',
+      },
+    ]);
+
+    service.editarProductoStock('ssd-1', {
+      tipo: 'DISCO_SSD',
+      marca: 'Kingston Technology',
+      especificacion: 'SSD 480GB SATA3',
+      stockMinimo: 3,
+    });
+    service.editarPuestoTrabajo('puesto-1', {
+      nombrePuesto: 'Puesto 1 corregido',
+      usuarioAsignado: 'María Pérez',
+    });
+
+    expect(service.stock()[0]).toMatchObject({
+      id: 'ssd-1',
+      marca: 'Kingston Technology',
+      cantidadDisponible: 2,
+      stockMinimo: 3,
+      codigoSeguimiento: 'STOCK-001',
+      sedeId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(service.puestos()[0]).toMatchObject({
+      id: 'puesto-1',
+      areaId: 'area-1',
+      codigoSeguimiento: 'PUESTO-TEST-1',
+      nombrePuesto: 'Puesto 1 corregido',
+      usuarioAsignado: 'María Pérez',
+      componentes: puestos[0]!.componentes,
+    });
+    expect(service.personas()).toContainEqual(
+      expect.objectContaining({
+        nombre: 'María Pérez',
+        areaId: 'area-1',
+        puestoId: 'puesto-1',
+      }),
+    );
+  });
+
   it('updates component fields through the administrative endpoint and preserves the ID', async () => {
     const savedInventory = {
       pisos: [],
@@ -107,6 +237,90 @@ describe('InventoryService', () => {
       id: 'hdd-1',
       especificacion: '2TB HDD',
       numeroSerie: 'SN-2',
+    });
+  });
+
+  it('sends the stable idempotency key and applies the inventory returned by the server', async () => {
+    const idempotencyKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const shipment = service.enviarStockADelegacion(
+      'ssd-1',
+      '11111111-1111-4111-8111-111111111111',
+      2,
+      'Reposición',
+      idempotencyKey,
+      '11111111-1111-4111-8111-111111111111',
+    );
+    const request = httpTesting.expectOne('/api/inventory/stock-transfers');
+
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({
+      insumoId: 'ssd-1',
+      destinoSedeId: '11111111-1111-4111-8111-111111111111',
+      cantidad: 2,
+      motivo: 'Reposición',
+      idempotencyKey,
+      expectedActorId: '11111111-1111-4111-8111-111111111111',
+    });
+    request.flush({
+      revision: '2',
+      payload: {
+        pisos: [],
+        areas: [],
+        personas: [],
+        stock: [{ ...stock[0]!, cantidadDisponible: 0 }],
+        puestos: [],
+        equiposRed: [],
+        componentesRetirados: [],
+        historial: [],
+      },
+      idempotencyKey,
+      movementId: 'hist-original',
+      alreadyProcessed: true,
+    });
+
+    await expect(shipment).resolves.toEqual({ alreadyProcessed: true });
+    expect(service.stock()[0]?.cantidadDisponible).toBe(0);
+  });
+
+  it('keeps timeout outcomes uncertain but recognizes a rolled-back shipment rejection', async () => {
+    const timedOutShipment = service.enviarStockADelegacion(
+      'ssd-1',
+      '11111111-1111-4111-8111-111111111111',
+      2,
+      'Reposición',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '11111111-1111-4111-8111-111111111111',
+    );
+    httpTesting
+      .expectOne('/api/inventory/stock-transfers')
+      .flush(
+        { code: 'UPSTREAM_TIMEOUT', error: 'Request timed out.' },
+        { status: 408, statusText: 'Request Timeout' },
+      );
+    await expect(timedOutShipment).rejects.toMatchObject({
+      status: 408,
+      outcomeUnknown: true,
+    });
+
+    const rejectedShipment = service.enviarStockADelegacion(
+      'ssd-1',
+      '11111111-1111-4111-8111-111111111111',
+      20,
+      'Reposición',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      '11111111-1111-4111-8111-111111111111',
+    );
+    await Promise.resolve();
+    httpTesting
+      .expectOne('/api/inventory/stock-transfers')
+      .flush(
+        { code: 'SHIPMENT_REJECTED', error: 'Insufficient stock.' },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await expect(rejectedShipment).rejects.toMatchObject({
+      status: 400,
+      code: 'SHIPMENT_REJECTED',
+      outcomeUnknown: false,
     });
   });
 

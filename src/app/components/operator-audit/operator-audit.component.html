@@ -24,26 +24,69 @@
       <select [ngModel]="operadorId()" (ngModelChange)="operadorId.set($event)">
         <option value="">Todos los operadores</option>
         <option *ngFor="let operador of operadoresDisponibles()" [value]="operador.id">
-          {{ operador.username }} · {{ operador.role === 'admin' ? 'Administrador' : 'Operador' }}
+          {{ operador.username }} ·
+          {{
+            operador.role === 'admin'
+              ? 'Administrador'
+              : operador.role === 'operator'
+                ? 'Operador'
+                : operador.role === 'solicitante'
+                  ? 'Solicitante'
+                  : 'Dashboard'
+          }}
         </option>
       </select>
     </label>
-    <button type="button" class="primary-button" [disabled]="cargando()" (click)="cargar()">
-      Aplicar filtros
-    </button>
+    <label>
+      <span>Módulo</span>
+      <input type="search" [ngModel]="modulo()" (ngModelChange)="modulo.set($event)" placeholder="Ej. inventario" />
+    </label>
+    <label>
+      <span>Acción</span>
+      <input type="search" [ngModel]="accion()" (ngModelChange)="accion.set($event)" placeholder="Ej. creó" />
+    </label>
+    <label>
+      <span>Búsqueda</span>
+      <input type="search" [ngModel]="busqueda()" (ngModelChange)="busqueda.set($event)" placeholder="Elemento o detalle" />
+    </label>
+    <label>
+      <span>Orden</span>
+      <select [ngModel]="orden()" (ngModelChange)="orden.set($event)">
+        <option value="newest">Más recientes</option>
+        <option value="oldest">Más antiguas</option>
+      </select>
+    </label>
+    <div class="audit-filter-actions">
+      <button type="button" class="secondary-button" [disabled]="cargando()" (click)="limpiarFiltros()">
+        Limpiar
+      </button>
+      <button type="button" class="primary-button" [disabled]="cargando()" (click)="cargar(1)">
+        Aplicar filtros
+      </button>
+    </div>
   </section>
 
   <p *ngIf="error()" class="inline-error" role="alert">{{ error() }}</p>
 
-  <section class="audit-summary" aria-label="Tareas por operador">
+  <section class="audit-summary" aria-label="Acciones por usuario">
     <article class="audit-total">
-      <span>Tareas registradas</span>
-      <strong>{{ totalTareas() }}</strong>
-      <small>en el período seleccionado</small>
+      <span>Acciones filtradas</span>
+      <strong>{{ totalAcciones() }}</strong>
+      <small>por usuario en los filtros seleccionados</small>
     </article>
     <article *ngFor="let operador of operadores()" class="audit-operator">
-      <span>{{ operador.role === 'admin' ? 'Administrador' : 'Operador' }}</span>
-      <strong>{{ operador.taskCount }}</strong>
+      <span>
+        {{
+          operador.role === 'admin'
+            ? 'Administrador'
+            : operador.role === 'operator'
+              ? 'Operador'
+              : operador.role === 'solicitante'
+                ? 'Solicitante'
+                : 'Dashboard'
+        }}
+      </span>
+      <strong>{{ operador.eventCount }}</strong>
       <small>{{ operador.username }}</small>
     </article>
     <p *ngIf="!cargando() && operadores().length === 0" class="audit-empty">
@@ -54,13 +97,13 @@
   <section class="audit-history">
     <div class="audit-history-heading">
       <div>
-        <h3>Actividad reciente</h3>
+        <h3>Actividad</h3>
         <p>
-          Se muestran hasta 500 acciones disponibles, de la más reciente a la más antigua.
-          Usá las fechas para acotar el período.
+          {{ totalEventos() }} resultados; mostrando la página {{ pagina() }} de
+          {{ totalPaginas() }}.
         </p>
       </div>
-      <span>{{ eventos().length }} registros</span>
+      <span>{{ eventos().length }} en esta página</span>
     </div>
     <div *ngIf="cargando()" class="audit-loading" role="status">Cargando auditoría…</div>
     <div *ngIf="!cargando() && eventos().length === 0" class="audit-empty">
@@ -72,8 +115,11 @@
           <tr>
             <th>Fecha y hora</th>
             <th>Operador</th>
+            <th>Módulo</th>
             <th>Acción</th>
+            <th>Identificador</th>
             <th>Elemento</th>
+            <th>Resultado</th>
             <th>Detalle</th>
           </tr>
         </thead>
@@ -81,17 +127,29 @@
           <tr *ngFor="let evento of eventos()">
             <td>{{ evento.createdAt | date: 'dd/MM/yyyy HH:mm' }}</td>
             <td>{{ evento.actorUsername }}</td>
-            <td>{{ evento.action }}</td>
             <td>{{ evento.entityType }}</td>
-            <td>{{ evento.entityName || evento.entityId || '—' }}</td>
+            <td>{{ evento.action }}</td>
+            <td>{{ evento.entityId || '—' }}</td>
+            <td>{{ evento.entityName || '—' }}</td>
+            <td>{{ resultado(evento) }}</td>
+            <td class="audit-event-details">{{ detalle(evento) }}</td>
           </tr>
         </tbody>
       </table>
     </div>
+    <nav *ngIf="totalEventos() > paginaTamano" class="audit-pagination" aria-label="Paginación de auditoría">
+      <button type="button" class="secondary-button" [disabled]="cargando() || pagina() <= 1" (click)="paginaAnterior()">
+        Anterior
+      </button>
+      <span>Página {{ pagina() }} de {{ totalPaginas() }}</span>
+      <button type="button" class="secondary-button" [disabled]="cargando() || pagina() >= totalPaginas()" (click)="paginaSiguiente()">
+        Siguiente
+      </button>
+    </nav>
   </section>
 
   <p class="audit-retention-note">
-    El historial comienza cuando se activa esta auditoría; las acciones anteriores no se pueden
-    reconstruir.
+    Las acciones anteriores a la auditoría solo se muestran cuando el sistema conserva un historial
+    atribuible al operador.
   </p>
 </main>

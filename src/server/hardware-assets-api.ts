@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import type { Pool } from 'pg';
+import { recordOperatorAuditEvents } from './operator-audit';
 import { requireRoles } from './session-user';
 import { DEFAULT_SEDE_ID } from '../shared/locations';
 
@@ -27,6 +28,13 @@ export interface HardwareAssetInput {
 export interface HardwareAsset extends HardwareAssetInput {
   id: string;
   fechaRegistro: Date;
+}
+
+export interface HardwareAssetEdit {
+  tipo: HardwareType;
+  marca: string;
+  modelo: string | null;
+  especificacion: string | null;
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -71,6 +79,41 @@ export function parseHardwareAsset(value: unknown): HardwareAssetInput | null {
   if (numeroPatrimonio && numeroPatrimonio.length > 100) return null;
 
   return { tipo, marca, modelo, especificacion, numeroSerie, numeroPatrimonio, sedeId };
+}
+
+export function parseHardwareAssetEdit(value: unknown): HardwareAssetEdit | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  if (
+    !Object.keys(body).every((key) =>
+      ['tipo', 'marca', 'modelo', 'especificacion'].includes(key),
+    )
+  ) {
+    return null;
+  }
+  const tipo = body['tipo'];
+  const marca = typeof body['marca'] === 'string' ? body['marca'].trim() : '';
+  const rawModelo = body['modelo'];
+  const rawEspecificacion = body['especificacion'];
+  if (
+    (typeof rawModelo !== 'string' && rawModelo !== null) ||
+    (typeof rawEspecificacion !== 'string' && rawEspecificacion !== null)
+  ) {
+    return null;
+  }
+  const modelo = typeof rawModelo === 'string' ? rawModelo.trim() || null : null;
+  const especificacion =
+    typeof rawEspecificacion === 'string' ? rawEspecificacion.trim() || null : null;
+  if (
+    !isHardwareType(tipo) ||
+    !marca ||
+    marca.length > 120 ||
+    (modelo !== null && modelo.length > 120) ||
+    (especificacion !== null && especificacion.length > 500)
+  ) {
+    return null;
+  }
+  return { tipo, marca, modelo, especificacion };
 }
 
 function mapAssetColumns(asset: HardwareAssetInput): unknown[] {
@@ -123,7 +166,15 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
          RETURNING ${assetSelect}`,
         mapAssetColumns(asset),
       );
-      response.status(201).json(result.rows[0]);
+      const created = result.rows[0];
+      if (created) {
+        response.locals['operatorAuditContext'] = {
+          entityId: created.id,
+          entityName: `${created.tipo} ${created.marca} ${created.modelo ?? ''}`.trim(),
+          details: { tipo: created.tipo, sedeId: created.sedeId ?? null },
+        };
+      }
+      response.status(201).json(created);
     } catch (error) {
       if (typeof error === 'object' && error && 'code' in error && error.code === '23505') {
         response.status(409).json({
@@ -180,7 +231,29 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
           );
           inserted.push(result.rows[0]!);
         }
+        const actor = request.session.user;
+        if (!actor) throw new Error('La sesión ya no es válida.');
+        await recordOperatorAuditEvents(client, actor, [
+          {
+            action: 'Importó equipos patrimoniales',
+            entityType: 'equipo patrimonial',
+            entityId: null,
+            entityName: `Importó ${inserted.length} equipos patrimoniales`,
+            details: {
+              resultado: 'exitoso',
+              cantidad: inserted.length,
+              registros: inserted.map((asset) => ({
+                id: asset.id,
+                tipo: asset.tipo,
+                marca: asset.marca,
+                modelo: asset.modelo,
+                sedeId: asset.sedeId ?? null,
+              })),
+            },
+          },
+        ]);
         await client.query('COMMIT');
+        response.locals['operatorAuditRecordedTransactionally'] = true;
         response.status(201).json(inserted);
       } catch (error) {
         await client.query('ROLLBACK');
@@ -197,6 +270,78 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
       }
     },
   );
+
+  router.patch('/hardware-assets/:id/details', requireHardwareManager, async (request, response, next) => {
+    const changes = parseHardwareAssetEdit(request.body);
+    if (!changes) {
+      response.status(400).json({ error: 'Completá tipo, marca, modelo y especificación válidos.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const current = await client.query<HardwareAsset>(
+        `SELECT ${assetSelect}
+         FROM gestion_it.hardware_assets
+         WHERE id = $1
+         FOR UPDATE`,
+        [request.params['id']],
+      );
+      const previous = current.rows[0];
+      if (!previous) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        response.status(404).json({ error: 'No se encontró el equipo.' });
+        return;
+      }
+
+      const result = await client.query<HardwareAsset>(
+        `UPDATE gestion_it.hardware_assets
+         SET tipo = $2, marca = $3, modelo = $4, especificacion = $5
+         WHERE id = $1
+         RETURNING ${assetSelect}`,
+        [previous.id, changes.tipo, changes.marca, changes.modelo, changes.especificacion],
+      );
+      const updated = result.rows[0];
+      const actor = request.session.user;
+      if (!updated || !actor) throw new Error('No se pudo completar la edición del equipo.');
+      await recordOperatorAuditEvents(client, actor, [
+        {
+          action: 'Actualizó los datos descriptivos de un equipo patrimonial',
+          entityType: 'equipo patrimonial',
+          entityId: updated.id,
+          entityName: `${updated.tipo} ${updated.marca} ${updated.modelo ?? ''}`.trim(),
+          details: {
+            resultado: 'exitoso',
+            anterior: {
+              tipo: previous.tipo,
+              marca: previous.marca,
+              modelo: previous.modelo,
+              especificacion: previous.especificacion,
+            },
+            posterior: {
+              tipo: updated.tipo,
+              marca: updated.marca,
+              modelo: updated.modelo,
+              especificacion: updated.especificacion,
+            },
+          },
+        },
+      ]);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      response.locals['operatorAuditRecordedTransactionally'] = true;
+      response.json(updated);
+    } catch (error) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      next(error);
+    } finally {
+      client.release();
+    }
+  });
 
   router.put(
     '/hardware-assets/:id/patrimony',
@@ -217,20 +362,54 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
         return;
       }
 
+      const client = await pool.connect();
+      let transactionStarted = false;
       try {
-        const result = await pool.query<HardwareAsset>(
+        await client.query('BEGIN');
+        transactionStarted = true;
+        const current = await client.query<HardwareAsset>(
+          `SELECT ${assetSelect}
+           FROM gestion_it.hardware_assets
+           WHERE id = $1
+           FOR UPDATE`,
+          [request.params['id']],
+        );
+        const previous = current.rows[0];
+        if (!previous) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          response.status(404).json({ error: 'No se encontró el equipo.' });
+          return;
+        }
+        const result = await client.query<HardwareAsset>(
           `UPDATE gestion_it.hardware_assets
          SET numero_patrimonio = $2
          WHERE id = $1
          RETURNING ${assetSelect}`,
-          [request.params['id'], numeroPatrimonio],
+          [previous.id, numeroPatrimonio],
         );
-        if (!result.rows[0]) {
-          response.status(404).json({ error: 'No se encontró el equipo.' });
-          return;
-        }
-        response.json(result.rows[0]);
+        const updated = result.rows[0];
+        const actor = request.session.user;
+        if (!updated || !actor) throw new Error('No se pudo asociar la etiqueta patrimonial.');
+        await recordOperatorAuditEvents(client, actor, [
+          {
+            action: 'Actualizó un número patrimonial',
+            entityType: 'equipo patrimonial',
+            entityId: updated.id,
+            entityName: `${updated.tipo} ${updated.marca} ${updated.modelo ?? ''}`.trim(),
+            details: {
+              resultado: 'exitoso',
+              anterior: { numeroPatrimonio: previous.numeroPatrimonio },
+              posterior: { numeroPatrimonio: updated.numeroPatrimonio },
+            },
+          },
+        ]);
+        await client.query('COMMIT');
+        transactionStarted = false;
+        response.locals['operatorAuditRecordedTransactionally'] = true;
+        response.json(updated);
       } catch (error) {
+        if (transactionStarted) await client.query('ROLLBACK');
         if (typeof error === 'object' && error && 'code' in error && error.code === '23505') {
           response
             .status(409)
@@ -238,6 +417,8 @@ export function createHardwareAssetsApi(pool: Pool): express.Router {
           return;
         }
         next(error);
+      } finally {
+        client.release();
       }
     },
   );

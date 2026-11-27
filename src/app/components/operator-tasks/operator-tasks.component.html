@@ -2,23 +2,70 @@
   <section class="page-heading">
     <div>
       <span class="eyebrow">ACTIVIDAD OPERATIVA</span>
-      <h2>Bitácora de tareas</h2>
-      <p>Registrá el trabajo realizado en {{ sedeNombre() }} independientemente de los reclamos.</p>
+      <h2>Registro de actividades</h2>
+      <p>Registrá y consultá el trabajo realizado por los operadores en {{ sedeNombre() }}.</p>
     </div>
   </section>
 
   <section class="data-panel task-form-panel">
     <div class="panel-heading">
       <div>
-        <h3>Registrar tarea realizada</h3>
-        <p>La fecha y el operador se asignan automáticamente.</p>
+        <h3>{{ tareaEnEdicion() ? 'Editar tarea' : 'Registrar tarea realizada' }}</h3>
+        <p>La fecha de realización y el responsable quedan asociados al historial.</p>
       </div>
     </div>
     <form class="task-form" (ngSubmit)="guardar()">
       <label>
+        Fecha y hora de realización
+        <input
+          type="datetime-local"
+          [ngModel]="performedAt()"
+          (ngModelChange)="performedAt.set($event)"
+          name="performedAt"
+          required
+        />
+      </label>
+      <label *ngIf="isAdmin(); else currentOperatorLabel">
+        Operador responsable
+        <select [ngModel]="operatorId()" (ngModelChange)="operatorId.set($event)" name="operatorId">
+          <option *ngFor="let operator of opciones()?.operators" [value]="operator.id">
+            {{ operator.username }}
+          </option>
+        </select>
+      </label>
+      <ng-template #currentOperatorLabel>
+        <label>
+          Operador responsable
+          <input [value]="authService.user()?.username ?? ''" readonly />
+        </label>
+      </ng-template>
+      <label>
         Tipo
         <select [ngModel]="tipo()" (ngModelChange)="tipo.set($event)" name="tipo">
           <option *ngFor="let opcion of tipos" [ngValue]="opcion">{{ opcion }}</option>
+        </select>
+      </label>
+      <label>
+        Área / sector
+        <select [ngModel]="areaId()" (ngModelChange)="cambiarArea($event)" name="areaId">
+          <option value="">Sin área asociada</option>
+          <option *ngFor="let area of opciones()?.areas" [value]="area.id">{{ area.nombre }}</option>
+        </select>
+      </label>
+      <label class="field-full">
+        Puesto o equipo relacionado (opcional)
+        <select
+          [ngModel]="selectedRelatedAssetKey()"
+          (ngModelChange)="cambiarEquipoRelacionado($event)"
+          name="relatedAsset"
+        >
+          <option value="">Sin equipo asociado</option>
+          <option
+            *ngFor="let asset of relatedAssetChoices()"
+            [value]="asset.type + ':' + asset.id"
+          >
+            {{ asset.label }}
+          </option>
         </select>
       </label>
       <label>
@@ -56,10 +103,37 @@
           placeholder="Describí el trabajo realizado y su resultado"
         ></textarea>
       </label>
+      <label class="field-full">
+        Observaciones adicionales (opcional)
+        <textarea
+          [ngModel]="observaciones()"
+          (ngModelChange)="observaciones.set($event)"
+          name="observaciones"
+          maxlength="5000"
+          rows="3"
+          placeholder="Anotá observaciones que complementen el detalle"
+        ></textarea>
+      </label>
+      <p *ngIf="optionsError()" class="inline-error field-full" role="alert">{{ optionsError() }}</p>
       <p *ngIf="error()" class="inline-error field-full" role="alert">{{ error() }}</p>
       <div class="task-form-actions field-full">
-        <button type="submit" class="primary-button" [disabled]="guardando()">
-          {{ guardando() ? 'Guardando…' : 'Guardar tarea' }}
+        <button type="submit" class="primary-button" [disabled]="guardando() || loadingOptions()">
+          {{
+            guardando()
+              ? 'Guardando…'
+              : tareaEnEdicion()
+                ? 'Guardar cambios'
+                : 'Guardar tarea'
+          }}
+        </button>
+        <button
+          *ngIf="tareaEnEdicion()"
+          type="button"
+          class="secondary-button"
+          [disabled]="guardando()"
+          (click)="cancelarEdicion()"
+        >
+          Cancelar edición
         </button>
       </div>
     </form>
@@ -69,30 +143,117 @@
     <div class="panel-heading">
       <div>
         <h3>Tareas registradas</h3>
-        <p>{{ tareas().length }} tareas en {{ sedeNombre() }}.</p>
+        <p>{{ totalTareas() }} resultados en {{ sedeNombre() }}.</p>
       </div>
     </div>
-    <p *ngIf="tasksService.loading()" class="feedback" role="status">Cargando tareas…</p>
-    <div *ngIf="!tasksService.loading() && tareas().length" class="task-list">
+    <section class="task-filters" aria-label="Filtros de tareas">
+      <label>
+        Buscar
+        <input
+          type="search"
+          [ngModel]="filtroTexto()"
+          (ngModelChange)="filtroTexto.set($event)"
+          placeholder="Título, detalle o sede"
+        />
+      </label>
+      <label>
+        Tipo
+        <select [ngModel]="filtroTipo()" (ngModelChange)="filtroTipo.set($event)">
+          <option value="">Todos los tipos</option>
+          <option *ngFor="let opcion of tipos" [value]="opcion">{{ opcion }}</option>
+        </select>
+      </label>
+      <label>
+        Operador
+        <input
+          type="search"
+          [ngModel]="filtroOperador()"
+          (ngModelChange)="filtroOperador.set($event)"
+          placeholder="Nombre del operador"
+        />
+      </label>
+      <label>
+        Área / sector
+        <select [ngModel]="filtroArea()" (ngModelChange)="filtroArea.set($event)">
+          <option value="">Todas las áreas</option>
+          <option *ngFor="let area of opciones()?.areas" [value]="area.id">{{ area.nombre }}</option>
+        </select>
+      </label>
+      <label>
+        Desde
+        <input type="date" [ngModel]="fechaDesde()" (ngModelChange)="fechaDesde.set($event)" />
+      </label>
+      <label>
+        Hasta
+        <input type="date" [ngModel]="fechaHasta()" (ngModelChange)="fechaHasta.set($event)" />
+      </label>
+      <label>
+        Orden
+        <select [ngModel]="orden()" (ngModelChange)="orden.set($event)">
+          <option value="newest">Más recientes</option>
+          <option value="oldest">Más antiguas</option>
+        </select>
+      </label>
+      <div class="task-filter-actions">
+        <button type="button" class="secondary-button" [disabled]="loading()" (click)="limpiarFiltros()">
+          Limpiar
+        </button>
+        <button type="button" class="primary-button" [disabled]="loading()" (click)="aplicarFiltros()">
+          Aplicar filtros
+        </button>
+      </div>
+      <small class="task-filter-note">
+        Las tareas no tienen un estado pendiente; este módulo registra tareas realizadas.
+      </small>
+    </section>
+    <p *ngIf="loading()" class="feedback" role="status">Cargando tareas…</p>
+    <div *ngIf="!loading() && tareas().length" class="task-list">
       <article *ngFor="let tarea of tareas()" class="task-card">
         <div class="task-card-heading">
           <div>
             <span class="type-badge">{{ tarea.tipo }}</span>
             <h4>{{ tarea.titulo }}</h4>
           </div>
-          <time>{{ tarea.createdAt | date: 'dd/MM/yyyy HH:mm' }}</time>
+          <time>Realizada {{ tarea.performedAt | date: 'dd/MM/yyyy HH:mm' }}</time>
         </div>
         <p>{{ tarea.descripcion }}</p>
+        <p *ngIf="tarea.observaciones" class="task-observations">
+          <strong>Observaciones:</strong> {{ tarea.observaciones }}
+        </p>
         <footer>
           <span>Operador: {{ tarea.operador }}</span>
+          <span *ngIf="tarea.areaNombre">Área: {{ tarea.areaNombre }}</span>
           <span *ngIf="tarea.duracionMinutos !== null">{{ tarea.duracionMinutos }} min</span>
         </footer>
+        <div *ngIf="nombreEquipoRelacionado(tarea)" class="task-related">
+          Equipo relacionado: {{ nombreEquipoRelacionado(tarea) }}
+        </div>
+        <div class="task-card-actions">
+          <small>Registrada {{ tarea.createdAt | date: 'dd/MM/yyyy HH:mm' }}</small>
+          <button
+            *ngIf="isAdmin() || tarea.operadorId === authService.user()?.id"
+            type="button"
+            class="text-button"
+            (click)="iniciarEdicion(tarea)"
+          >
+            Editar tarea
+          </button>
+        </div>
       </article>
     </div>
-    <div *ngIf="!tasksService.loading() && !tareas().length" class="empty-state">
+    <div *ngIf="!loading() && !tareas().length" class="empty-state">
       <span class="empty-icon">◷</span>
-      <h3>Todavía no hay tareas registradas</h3>
-      <p>Las tareas que registres en esta sede aparecerán aquí.</p>
+      <h3>No hay tareas para estos filtros</h3>
+      <p>Probá limpiar o modificar los filtros aplicados.</p>
     </div>
+    <nav *ngIf="totalTareas() > paginaTamano" class="task-pagination" aria-label="Paginación de tareas">
+      <button type="button" class="secondary-button" [disabled]="loading() || pagina() <= 1" (click)="paginaAnterior()">
+        Anterior
+      </button>
+      <span>Página {{ pagina() }} de {{ totalPaginas() }} · {{ totalTareas() }} resultados</span>
+      <button type="button" class="secondary-button" [disabled]="loading() || pagina() >= totalPaginas()" (click)="paginaSiguiente()">
+        Siguiente
+      </button>
+    </nav>
   </section>
 </main>

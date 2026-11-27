@@ -1,18 +1,19 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import type { PagedResult } from '../models/paged-result';
 
 export interface AuditedOperator {
   id: string;
   username: string;
-  role: 'admin' | 'operator';
+  role: 'admin' | 'operator' | 'solicitante' | 'dashboard';
 }
 
-export interface OperatorTaskSummary {
+export interface OperatorAuditSummary {
   actorId: string;
   username: string;
-  role: 'admin' | 'operator';
-  taskCount: number;
+  role: 'admin' | 'operator' | 'solicitante' | 'dashboard';
+  eventCount: number;
 }
 
 export interface OperatorAuditEvent {
@@ -27,21 +28,39 @@ export interface OperatorAuditEvent {
   createdAt: string;
 }
 
-export interface OperatorAuditResponse {
+export interface OperatorAuditResponse extends Omit<PagedResult<OperatorAuditEvent>, 'items'> {
   operators: AuditedOperator[];
-  summary: OperatorTaskSummary[];
+  summary: OperatorAuditSummary[];
   events: OperatorAuditEvent[];
+}
+
+export interface OperatorAuditFilters {
+  from: string;
+  to: string;
+  actorId: string;
+  module: string;
+  action: string;
+  search: string;
+  sort: 'newest' | 'oldest';
+  page: number;
+  pageSize: number;
 }
 
 @Injectable({ providedIn: 'root' })
 export class OperatorAuditService {
   private readonly http = inject(HttpClient);
 
-  async listar(from: string, to: string, actorId: string): Promise<OperatorAuditResponse> {
-    let params = new HttpParams();
-    if (from) params = params.set('from', from);
-    if (to) params = params.set('to', to);
-    if (actorId) params = params.set('actorId', actorId);
+  async listar(filters: OperatorAuditFilters): Promise<OperatorAuditResponse> {
+    let params = new HttpParams()
+      .set('page', filters.page)
+      .set('pageSize', filters.pageSize)
+      .set('sort', filters.sort);
+    if (filters.from) params = params.set('from', filters.from);
+    if (filters.to) params = params.set('to', filters.to);
+    if (filters.actorId) params = params.set('actorId', filters.actorId);
+    if (filters.module.trim()) params = params.set('module', filters.module.trim());
+    if (filters.action.trim()) params = params.set('action', filters.action.trim());
+    if (filters.search.trim()) params = params.set('search', filters.search.trim());
 
     try {
       return await firstValueFrom(

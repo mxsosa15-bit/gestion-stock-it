@@ -94,6 +94,7 @@ export class WorkshopTicketsComponent implements OnInit, OnDestroy {
   }
 
   async devolver(ticket: SupportTicket): Promise<void> {
+    if (this.busyTicketId() === ticket.id) return;
     const transfer = ticket.taller;
     const draft = this.returnDrafts()[ticket.id];
     if (!transfer || transfer.estado !== 'En taller' || !draft?.solucion.trim()) {
@@ -107,6 +108,25 @@ export class WorkshopTicketsComponent implements OnInit, OnDestroy {
         !draft.motivoReemplazo.trim())
     ) {
       this.error.set('Completá los datos del equipo de reemplazo y el motivo del cambio.');
+      return;
+    }
+
+    const mismoEquipo = draft.resultadoEquipo === 'MISMO';
+    const equipoEntregado = mismoEquipo ? transfer.equipo : draft.equipoDevuelto.trim();
+    const identificacionEntregada = mismoEquipo
+      ? transfer.identificacion
+      : draft.identificacionDevuelta.trim();
+    const resumen = [
+      `Reclamo: ${ticket.titulo}`,
+      `Equipo recibido en taller: ${transfer.equipo} · ${transfer.identificacion}`,
+      'Origen: Taller de Casa Central',
+      `Destino: ${ticket.sede_nombre ?? 'Sede de origen no identificada'} · ${ticket.area_nombre ?? 'Área no identificada'}`,
+      `Resultado: ${mismoEquipo ? 'devolución del mismo equipo' : 'entrega de reemplazo'}`,
+      `Equipo entregado: ${equipoEntregado} · ${identificacionEntregada}`,
+      ...(mismoEquipo ? [] : [`Motivo del reemplazo: ${draft.motivoReemplazo.trim()}`]),
+      `Trabajo realizado: ${draft.solucion.trim()}`,
+    ].join('\n');
+    if (!window.confirm(`¿Confirmás registrar la devolución y terminar el reclamo?\n\n${resumen}`)) {
       return;
     }
 

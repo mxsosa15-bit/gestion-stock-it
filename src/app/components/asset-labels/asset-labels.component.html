@@ -70,7 +70,13 @@
           [ngModel]="newAsset().numeroPatrimonio"
           (ngModelChange)="actualizarNuevoAsset('numeroPatrimonio', $event)"
       /></label>
-      <button class="print-action" type="submit" [disabled]="saving()">Registrar por serie</button>
+      <button
+        class="print-action"
+        type="submit"
+        [disabled]="saving() || importing()"
+      >
+        {{ saving() ? 'Guardando…' : 'Registrar por serie' }}
+      </button>
     </form>
 
     <form class="entry-card import-card">
@@ -109,7 +115,7 @@
         <input
           type="file"
           accept=".csv,text/csv"
-          [disabled]="importing()"
+          [disabled]="importing() || saving()"
           (change)="importarCsv($event)"
         />
       </label>
@@ -172,11 +178,76 @@
           <button
             type="button"
             class="secondary-action"
-            [disabled]="patrimonyDrafts()[asset.id] === undefined || saving()"
+            [disabled]="patrimonyDrafts()[asset.id] === undefined || saving() || importing()"
             (click)="guardarPatrimonio(asset)"
           >
             Asociar
           </button>
+          <button
+            type="button"
+            class="secondary-action"
+            [disabled]="saving() || importing()"
+            (click)="iniciarEdicion(asset)"
+          >
+            Editar datos
+          </button>
+          @if (editingAssetId() === asset.id) {
+            @if (assetEditDraft(); as draft) {
+              <form class="asset-edit-form" (ngSubmit)="guardarEdicion(asset)">
+                <label>
+                  Tipo
+                  <select
+                    [ngModel]="draft.tipo"
+                    name="editType-{{ asset.id }}"
+                    (ngModelChange)="actualizarCampoEdicion('tipo', $event)"
+                  >
+                    @for (type of types; track type) {
+                      <option [value]="type">{{ type }}</option>
+                    }
+                  </select>
+                </label>
+                <label>
+                  Marca
+                  <input
+                    required
+                    maxlength="120"
+                    name="editBrand-{{ asset.id }}"
+                    [ngModel]="draft.marca"
+                    (ngModelChange)="actualizarCampoEdicion('marca', $event)"
+                  />
+                </label>
+                <label>
+                  Modelo
+                  <input
+                    maxlength="120"
+                    name="editModel-{{ asset.id }}"
+                    [ngModel]="draft.modelo ?? ''"
+                    (ngModelChange)="actualizarCampoEdicion('modelo', $event)"
+                  />
+                </label>
+                <label>
+                  Especificación
+                  <input
+                    maxlength="500"
+                    name="editSpecification-{{ asset.id }}"
+                    [ngModel]="draft.especificacion ?? ''"
+                    (ngModelChange)="actualizarCampoEdicion('especificacion', $event)"
+                  />
+                </label>
+                <button type="submit" class="print-action" [disabled]="saving() || importing()">
+                  {{ saving() ? 'Guardando…' : 'Guardar datos' }}
+                </button>
+                <button
+                  type="button"
+                  class="secondary-action"
+                  [disabled]="saving() || importing()"
+                  (click)="cancelarEdicion()"
+                >
+                  Cancelar
+                </button>
+              </form>
+            }
+          }
           <label class="select-label">
             <input
               type="checkbox"

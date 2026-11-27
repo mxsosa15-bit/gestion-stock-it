@@ -93,7 +93,59 @@
     </form>
 
     <section class="requester-tickets" aria-label="Seguimiento de mis reclamos">
-      <h3>Seguimiento</h3>
+      <div class="filters-heading">
+        <div>
+          <h3>Seguimiento</h3>
+          <p>{{ totalResultados() }} reclamos encontrados en tu área.</p>
+        </div>
+      </div>
+      <div class="filters-grid">
+        <label>
+          <span>Buscar</span>
+          <input type="search" [ngModel]="filtroTexto()" (ngModelChange)="filtroTexto.set($event)" />
+        </label>
+        <label>
+          <span>Estado</span>
+          <select [ngModel]="filtroEstado()" (ngModelChange)="filtroEstado.set($event)">
+            <option value="Todos">Todos los estados</option>
+            @for (estado of estados; track estado) {
+              <option [value]="estado">{{ estado }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Categoría</span>
+          <select [ngModel]="filtroCategoria()" (ngModelChange)="filtroCategoria.set($event)">
+            <option value="Todas">Todas las categorías</option>
+            @for (categoria of categorias; track categoria) {
+              <option [value]="categoria">{{ categoria }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Desde</span>
+          <input type="date" [ngModel]="fechaDesde()" (ngModelChange)="fechaDesde.set($event)" />
+        </label>
+        <label>
+          <span>Hasta</span>
+          <input type="date" [ngModel]="fechaHasta()" (ngModelChange)="fechaHasta.set($event)" />
+        </label>
+        <label>
+          <span>Orden</span>
+          <select [ngModel]="orden()" (ngModelChange)="orden.set($event)">
+            <option value="newest">Más recientes</option>
+            <option value="oldest">Más antiguas</option>
+          </select>
+        </label>
+        <div class="filter-actions">
+          <button type="button" class="secondary-action" [disabled]="loading()" (click)="limpiarFiltros()">
+            Limpiar
+          </button>
+          <button type="button" class="primary-action" [disabled]="loading()" (click)="aplicarFiltros()">
+            Aplicar filtros
+          </button>
+        </div>
+      </div>
       @if (loading()) {
         <p class="feedback" role="status">Cargando tus reclamos…</p>
       } @else if (tickets().length === 0) {
@@ -115,6 +167,73 @@
                 <strong>{{ ticket.area_nombre ?? 'Sin área' }}</strong> · Afectado:
                 <strong>{{ ticket.nombre_afectado ?? 'No especificado' }}</strong>
               </p>
+              @if (ticket.estado === 'Abierto' && !ticket.taller) {
+                @if (ticketEnEdicionId() === ticket.id) {
+                  @if (edicionTicket(); as details) {
+                    <form class="ticket-edit-form" (ngSubmit)="guardarEdicionTicket(ticket)">
+                      <label>
+                        <span>Asunto</span>
+                        <input
+                          required
+                          maxlength="200"
+                          name="editTitle-{{ ticket.id }}"
+                          [ngModel]="details.titulo"
+                          (ngModelChange)="actualizarCampoEdicionTicket('titulo', $event)"
+                        />
+                      </label>
+                      <label>
+                        <span>Categoría</span>
+                        <select
+                          name="editCategory-{{ ticket.id }}"
+                          [ngModel]="details.categoria"
+                          (ngModelChange)="actualizarCampoEdicionTicket('categoria', $event)"
+                        >
+                          @for (categoria of categorias; track categoria) {
+                            <option [value]="categoria">{{ categoria }}</option>
+                          }
+                        </select>
+                      </label>
+                      <label>
+                        <span>Detalle</span>
+                        <textarea
+                          required
+                          maxlength="10000"
+                          rows="4"
+                          name="editDescription-{{ ticket.id }}"
+                          [ngModel]="details.descripcion"
+                          (ngModelChange)="actualizarCampoEdicionTicket('descripcion', $event)"
+                        ></textarea>
+                      </label>
+                      <div class="ticket-actions">
+                        <button
+                          type="submit"
+                          class="primary-action"
+                          [disabled]="busyTicketId() === ticket.id"
+                        >
+                          {{ busyTicketId() === ticket.id ? 'Guardando…' : 'Guardar cambios' }}
+                        </button>
+                        <button
+                          type="button"
+                          class="secondary-action"
+                          [disabled]="busyTicketId() === ticket.id"
+                          (click)="cancelarEdicionTicket()"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  }
+                } @else {
+                  <button
+                    type="button"
+                    class="secondary-action"
+                    [disabled]="busyTicketId() === ticket.id"
+                    (click)="iniciarEdicionTicket(ticket)"
+                  >
+                    Editar reclamo abierto
+                  </button>
+                }
+              }
               <ol class="status-steps" [attr.aria-label]="'Estado actual: ' + ticket.estado">
                 @for (estado of estados; track estado; let index = $index) {
                   <li
@@ -164,7 +283,7 @@
                         />
                         <span>
                           Verifiqué que este es el equipo exacto retirado de mi área y autorizo su
-                          envío al taller. La aprobación se registra con mi cuenta.
+                          traslado al taller de Casa Central. La aprobación se registra con mi cuenta.
                         </span>
                       </label>
                       <div class="ticket-actions">
@@ -248,6 +367,15 @@
           }
         </div>
       }
+      <nav *ngIf="totalResultados() > paginaTamano" class="ticket-pagination" aria-label="Paginación de mis reclamos">
+        <button type="button" class="secondary-action" [disabled]="loading() || pagina() <= 1" (click)="paginaAnterior()">
+          Anterior
+        </button>
+        <span>Página {{ pagina() }} de {{ totalPaginas() }} · {{ totalResultados() }} resultados</span>
+        <button type="button" class="secondary-action" [disabled]="loading() || pagina() >= totalPaginas()" (click)="paginaSiguiente()">
+          Siguiente
+        </button>
+      </nav>
     </section>
   } @else {
     <section class="tickets-heading">
@@ -268,13 +396,22 @@
       <div class="filters-heading">
         <div>
           <h3>Filtros y reportes</h3>
-          <p>{{ filteredTickets().length }} reclamos coinciden con los filtros.</p>
+          <p>{{ totalResultados() }} reclamos coinciden; se muestra la página actual.</p>
         </div>
-        <button type="button" class="secondary-action" (click)="exportarReporte()">
-          Descargar reporte CSV
+        <button type="button" class="secondary-action" [disabled]="loading()" (click)="exportarReporte()">
+          Descargar página CSV
         </button>
       </div>
       <div class="filters-grid">
+        <label>
+          <span>Buscar</span>
+          <input
+            type="search"
+            [ngModel]="filtroTexto()"
+            (ngModelChange)="filtroTexto.set($event)"
+            placeholder="Asunto, detalle o elemento"
+          />
+        </label>
         <label>
           <span>Estado</span>
           <select [ngModel]="filtroEstado()" (ngModelChange)="filtroEstado.set($event)">
@@ -301,6 +438,48 @@
           <span>Hasta</span>
           <input type="date" [ngModel]="fechaHasta()" (ngModelChange)="fechaHasta.set($event)" />
         </label>
+        <label>
+          <span>Sede o delegación</span>
+          <input
+            type="search"
+            [ngModel]="filtroSede()"
+            (ngModelChange)="filtroSede.set($event)"
+            placeholder="Nombre de la sede"
+          />
+        </label>
+        <label>
+          <span>Área o sector</span>
+          <input
+            type="search"
+            [ngModel]="filtroArea()"
+            (ngModelChange)="filtroArea.set($event)"
+            placeholder="Nombre del área"
+          />
+        </label>
+        <label>
+          <span>Solicitante / responsable</span>
+          <input
+            type="search"
+            [ngModel]="filtroResponsable()"
+            (ngModelChange)="filtroResponsable.set($event)"
+            placeholder="Usuario"
+          />
+        </label>
+        <label>
+          <span>Orden</span>
+          <select [ngModel]="orden()" (ngModelChange)="orden.set($event)">
+            <option value="newest">Más recientes</option>
+            <option value="oldest">Más antiguas</option>
+          </select>
+        </label>
+        <div class="filter-actions">
+          <button type="button" class="secondary-action" [disabled]="loading()" (click)="limpiarFiltros()">
+            Limpiar
+          </button>
+          <button type="button" class="primary-action" [disabled]="loading()" (click)="aplicarFiltros()">
+            Aplicar filtros
+          </button>
+        </div>
       </div>
     </section>
 
@@ -532,6 +711,15 @@
         }
       }
     </section>
+    <nav *ngIf="totalResultados() > paginaTamano" class="ticket-pagination" aria-label="Paginación de reclamos">
+      <button type="button" class="secondary-action" [disabled]="loading() || pagina() <= 1" (click)="paginaAnterior()">
+        Anterior
+      </button>
+      <span>Página {{ pagina() }} de {{ totalPaginas() }} · {{ totalResultados() }} resultados</span>
+      <button type="button" class="secondary-action" [disabled]="loading() || pagina() >= totalPaginas()" (click)="paginaSiguiente()">
+        Siguiente
+      </button>
+    </nav>
   }
 
   @if (error()) {

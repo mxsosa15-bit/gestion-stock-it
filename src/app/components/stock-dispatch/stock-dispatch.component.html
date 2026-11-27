@@ -13,7 +13,65 @@
     <p class="dispatch-feedback dispatch-success" role="status">{{ aviso() }}</p>
   }
 
-  @if (delegaciones().length === 0) {
+  @if (pendiente(); as operacionPendiente) {
+    <div class="dispatch-pending" aria-live="polite">
+      <h4>
+        @switch (estado()) {
+          @case ('sending') {
+            Enviando stock…
+          }
+          @case ('conflict') {
+            Conflicto de envío
+          }
+          @default {
+            Resultado pendiente de verificar
+          }
+        }
+      </h4>
+      <dl>
+        <div>
+          <dt>Producto</dt>
+          <dd>{{ operacionPendiente.producto }}</dd>
+        </div>
+        <div>
+          <dt>Cantidad</dt>
+          <dd>{{ operacionPendiente.cantidad }}</dd>
+        </div>
+        <div>
+          <dt>Origen</dt>
+          <dd>Casa Central</dd>
+        </div>
+        <div>
+          <dt>Destino</dt>
+          <dd>{{ operacionPendiente.destino }}</dd>
+        </div>
+        <div>
+          <dt>Motivo</dt>
+          <dd>{{ operacionPendiente.motivo }}</dd>
+        </div>
+      </dl>
+      @if (estado() !== 'conflict') {
+        <button
+          type="button"
+          class="dispatch-button"
+          [disabled]="enviando() || reservando()"
+          (click)="reintentarEnvio()"
+        >
+          {{
+            reservando()
+              ? 'Preparando verificación…'
+              : enviando()
+                ? 'Verificando…'
+                : 'Reintentar / verificar resultado'
+          }}
+        </button>
+      }
+    </div>
+  } @else if (estado() === 'conflict') {
+    <p class="dispatch-pending" role="status">
+      No se puede iniciar otro envío hasta verificar y resolver el conflicto pendiente.
+    </p>
+  } @else if (delegaciones().length === 0) {
     <p class="dispatch-empty">No hay delegaciones activas disponibles como destino.</p>
   } @else if (stockCentral().length === 0) {
     <p class="dispatch-empty">Casa Central no tiene productos disponibles para enviar.</p>
@@ -70,9 +128,66 @@
           (ngModelChange)="motivo.set($event)"
         />
       </label>
-      <button type="submit" class="dispatch-button" [disabled]="enviando()">
-        {{ enviando() ? 'Registrando envío…' : 'Registrar envío' }}
+      <button
+        type="submit"
+        class="dispatch-button"
+        [disabled]="enviando() || reservando()"
+      >
+        {{ reservando() ? 'Preparando envío…' : enviando() ? 'Enviando…' : 'Confirmar envío' }}
       </button>
     </form>
+  }
+
+  @if (confirmacion(); as operacion) {
+    <div class="dispatch-dialog-backdrop">
+      <section
+        class="dispatch-confirmation"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dispatch-confirmation-title"
+      >
+        <h4 id="dispatch-confirmation-title">¿Está seguro de realizar este envío?</h4>
+        <dl>
+          <div>
+            <dt>Producto</dt>
+            <dd>{{ operacion.producto }}</dd>
+          </div>
+          <div>
+            <dt>Cantidad</dt>
+            <dd>{{ operacion.cantidad }}</dd>
+          </div>
+          <div>
+            <dt>Origen</dt>
+            <dd>Casa Central</dd>
+          </div>
+          <div>
+            <dt>Destino</dt>
+            <dd>{{ operacion.destino }}</dd>
+          </div>
+          <div>
+            <dt>Motivo</dt>
+            <dd>{{ operacion.motivo }}</dd>
+          </div>
+        </dl>
+        <div class="dispatch-dialog-actions">
+          <button
+            type="button"
+            class="dispatch-cancel-button"
+            [disabled]="enviando() || reservando()"
+            (click)="cancelarConfirmacion()"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="dispatch-button"
+            [disabled]="enviando() || reservando()"
+            (click)="confirmarEnvio()"
+          >
+            {{ reservando() ? 'Preparando envío…' : enviando() ? 'Enviando…' : 'Sí, realizar envío' }}
+          </button>
+        </div>
+      </section>
+    </div>
   }
 </section>

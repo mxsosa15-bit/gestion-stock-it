@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { normalizeSnapshot, type InventorySnapshot } from './inventory-api';
+import { parseOptionalDate, parseOptionalText, parsePageOptions } from './list-query';
+import { recordOperatorAuditEvents } from './operator-audit';
 import { requireRoles } from './session-user';
 
 type EntityType = 'AREA' | 'PERSONA' | 'COMPONENTE' | 'EQUIPO_RED';
@@ -450,8 +452,119 @@ export function createInventoryTransfersApi(pool: Pool): express.Router {
   const router = express.Router();
   const requireOperator = requireRoles(['admin', 'operator']);
 
-  router.get('/transferencias', requireOperator, async (_request, response, next) => {
+  router.get('/transferencias', requireOperator, async (request, response, next) => {
+    const search = parseOptionalText(request.query['search'], 200);
+    const site = parseOptionalText(request.query['site'], 120);
+    const area = parseOptionalText(request.query['area'], 120);
+    const operator = parseOptionalText(request.query['operator'], 64);
+    const from = parseOptionalDate(request.query['from']);
+    const to = parseOptionalDate(request.query['to']);
+    const type = parseOptionalText(request.query['type'], 24);
+    const sort = parseOptionalText(request.query['sort'], 16);
+    const pagination = parsePageOptions(request.query['page'], request.query['pageSize'], 25);
+    if (
+      search === undefined ||
+      site === undefined ||
+      area === undefined ||
+      operator === undefined ||
+      from === undefined ||
+      to === undefined ||
+      type === undefined ||
+      sort === undefined ||
+      pagination === null ||
+      (from !== null && to !== null && from > to) ||
+      (type !== null && !['AREA', 'PERSONA', 'COMPONENTE', 'EQUIPO_RED'].includes(type)) ||
+      (sort !== null && sort !== 'newest' && sort !== 'oldest')
+    ) {
+      response.status(400).json({ error: 'Los filtros de transferencias no son válidos.' });
+      return;
+    }
+
+    const values: unknown[] = [];
+    const filters: string[] = [];
+    const bind = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (from) filters.push(`transfer.created_at >= ${bind(from)}::date`);
+    if (to) filters.push(`transfer.created_at < ${bind(to)}::date + interval '1 day'`);
+    if (operator) filters.push(`actor.username ILIKE '%' || ${bind(operator)} || '%'`);
+    if (search) {
+      const term = bind(search);
+      filters.push(
+        `(transfer.description ILIKE '%' || ${term} || '%'
+          OR actor.username ILIKE '%' || ${term} || '%'
+          OR EXISTS (
+            SELECT 1
+            FROM gestion_it.inventory_transfer_movements AS searched
+            WHERE searched.transfer_id = transfer.id
+              AND (searched.entity_name ILIKE '%' || ${term} || '%'
+                OR searched.entity_type ILIKE '%' || ${term} || '%'
+                OR searched.entity_id ILIKE '%' || ${term} || '%')
+          ))`,
+      );
+    }
+    if (type) {
+      const typeParam = bind(type);
+      filters.push(
+        `EXISTS (
+          SELECT 1
+          FROM gestion_it.inventory_transfer_movements AS typed
+          WHERE typed.transfer_id = transfer.id AND typed.entity_type = ${typeParam}
+        )`,
+      );
+    }
+    if (area) {
+      const areaParam = bind(area);
+      filters.push(
+        `EXISTS (
+          SELECT 1
+          FROM gestion_it.inventory_transfer_movements AS located
+          LEFT JOIN gestion_it.areas AS origin_area
+            ON origin_area.inventory_area_id = located.origin->>'areaId'
+          LEFT JOIN gestion_it.areas AS destination_area
+            ON destination_area.inventory_area_id = located.destination->>'areaId'
+          WHERE located.transfer_id = transfer.id
+            AND (origin_area.nombre ILIKE '%' || ${areaParam} || '%'
+              OR destination_area.nombre ILIKE '%' || ${areaParam} || '%')
+        )`,
+      );
+    }
+    if (site) {
+      const siteParam = bind(site);
+      filters.push(
+        `EXISTS (
+          SELECT 1
+          FROM gestion_it.inventory_transfer_movements AS located
+          LEFT JOIN gestion_it.areas AS origin_area
+            ON origin_area.inventory_area_id = located.origin->>'areaId'
+          LEFT JOIN gestion_it.sedes AS origin_site ON origin_site.id = origin_area.sede_id
+          LEFT JOIN gestion_it.areas AS destination_area
+            ON destination_area.inventory_area_id = located.destination->>'areaId'
+          LEFT JOIN gestion_it.sedes AS destination_site
+            ON destination_site.id = destination_area.sede_id
+          WHERE located.transfer_id = transfer.id
+            AND (origin_site.nombre ILIKE '%' || ${siteParam} || '%'
+              OR destination_site.nombre ILIKE '%' || ${siteParam} || '%')
+        )`,
+      );
+    }
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+    const hasPagedQuery = Object.keys(request.query).length > 0;
+    const baseFrom = `FROM gestion_it.inventory_transfers AS transfer
+         JOIN gestion_it.app_users AS actor ON actor.id = transfer.created_by`;
+
     try {
+      const count = await pool.query<{ total: number }>(
+        `SELECT count(*)::int AS total ${baseFrom} ${where}`,
+        values,
+      );
+      const pageValues = [
+        ...values,
+        hasPagedQuery ? pagination.pageSize : 100,
+        hasPagedQuery ? pagination.offset : 0,
+      ];
       const result = await pool.query(
         `SELECT transfer.id,
                 transfer.description AS descripcion,
@@ -470,22 +583,31 @@ export function createInventoryTransfersApi(pool: Pool): express.Router {
                   ) FILTER (WHERE movement.id IS NOT NULL),
                   '[]'::jsonb
                 ) AS movimientos
-         FROM gestion_it.inventory_transfers AS transfer
-         JOIN gestion_it.app_users AS actor ON actor.id = transfer.created_by
+         ${baseFrom}
          LEFT JOIN gestion_it.inventory_transfer_movements AS movement
            ON movement.transfer_id = transfer.id
+         ${where}
          GROUP BY transfer.id, actor.username
-         ORDER BY transfer.created_at DESC, transfer.id DESC
-         LIMIT 100`,
+         ORDER BY transfer.created_at ${order}, transfer.id ${order}
+         LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
+        pageValues,
       );
+      const items = result.rows.map((row) => ({
+        id: row['id'],
+        descripcion: row['descripcion'],
+        creadoAt: row['creadoAt'],
+        creadoPor: row['creadoPor'],
+        movimientos: row['movimientos'],
+      }));
       response.json(
-        result.rows.map((row) => ({
-          id: row['id'],
-          descripcion: row['descripcion'],
-          creadoAt: row['creadoAt'],
-          creadoPor: row['creadoPor'],
-          movimientos: row['movimientos'],
-        })),
+        hasPagedQuery
+          ? {
+              items,
+              total: count.rows[0]?.total ?? 0,
+              page: pagination.page,
+              pageSize: pagination.pageSize,
+            }
+          : items,
       );
     } catch (error) {
       next(error);
@@ -569,8 +691,27 @@ export function createInventoryTransfersApi(pool: Pool): express.Router {
       );
       const savedSnapshot = saved.rows[0];
       if (!savedSnapshot) throw new Error('No se pudo recuperar el inventario transferido.');
+      await recordOperatorAuditEvents(client, actor, [
+        {
+          action: 'Registró una transferencia de inventario',
+          entityType: 'transferencia',
+          entityId: transferId,
+          entityName: transfer.descripcion,
+          details: {
+            resultado: 'exitoso',
+            movimientos: result.movimientos.map((movement) => ({
+              tipo: movement.tipoEntidad,
+              registroId: movement.entidadId,
+              elemento: movement.nombreEntidad,
+              origen: movement.origen,
+              destino: movement.destino,
+            })),
+          },
+        },
+      ]);
       await client.query('COMMIT');
       transactionStarted = false;
+      response.locals['operatorAuditRecordedTransactionally'] = true;
       response.status(201).json({
         transferenciaId: transferId,
         revision: savedSnapshot.revision,
